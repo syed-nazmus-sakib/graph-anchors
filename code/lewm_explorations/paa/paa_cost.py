@@ -40,7 +40,7 @@ def _release_cache():
 class PAAGoalCost(nn.Module):
     def __init__(self, nodes, mode='fixed', span=4, max_hops=12, head=None, tau=0.5, pess=1.0, knn=10, agg='min',
                  thr_q=0.5, ap_offset=None, ap_step=5, ap_k=8, gap_cal=False, frac=1.0, drop_box=None, switch=1.0,
-                 handoff=False, handoff_hops=0, pool=False, budget=8.0, alpha=0.25):
+                 handoff=False, handoff_hops=0, pool=False, budget=8.0, alpha=0.25, exec_mode='fixed'):
         super().__init__()
         d = np.load(nodes)
         self.emb_all = torch.from_numpy(d['emb'].astype(np.float32))
@@ -49,6 +49,10 @@ class PAAGoalCost(nn.Module):
             float(tau), float(pess), int(knn), agg
         self.thr_q = float(thr_q)
         self.budget, self.alpha = float(budget), float(alpha)  # mode='metro': waypoint budget (frames), quantile of Lambda
+        # exec_mode='pass' (agg='min'): the policy executes a plan only up to the block where it comes closest to its anchor, then
+        # plans again (WorldModelPolicy asks exec_blocks); 'fixed': always the configured number of blocks
+        self.exec_mode, self._want_step, self._step, self._exec_hist = exec_mode, False, None, []
+        assert exec_mode in ('fixed', 'pass') and (exec_mode == 'fixed' or agg == 'min'), 'exec_mode=pass needs agg=min'
         self.ap_offset, self.ap_step, self.ap_k = ap_offset, int(ap_step), int(ap_k)
         self.gap_cal = bool(gap_cal)  # gap: convert graph hops to recorded blocks before choosing the retrieval bank
         self.frac = float(frac)  # ablation: build the graph from this fraction of the training episodes (seeded)
@@ -267,7 +271,30 @@ class PAAGoalCost(nn.Module):
         return {'graph_build_s': t['build_s'], 'dijkstra_ms': 1e3 * t['dijkstra_s'] / max(1, t['dijkstra_n']),
                 'goals': float(t['dijkstra_n']),
                 **({'handoff_open': self._ho['open'] / max(1, self._ho['n']), 'handoff_fired': self._ho['fired'] / max(1, self._ho['n'])}
-                   if self.handoff else {})}
+                   if self.handoff else {}),
+                **({'exec_blocks_mean': float(np.mean(self._exec_hist))} if self._exec_hist else {})}
+
+    @torch.inference_mode()
+    def exec_blocks(self, solver, info, actions, max_blocks):
+        """exec_mode='pass': the number of blocks of each returned plan to execute = the block at which the plan comes closest to
+        its anchor (1-based), between 1 and max_blocks.  The plans (n, horizon, D) are rolled out once more, one candidate each."""
+        dev, dt = solver.device, solver.dtype
+        exp = {}
+        for k, v in info.items():
+            if torch.is_tensor(v):
+                exp[k] = v.to(device=dev, dtype=dt if v.is_floating_point() else None).unsqueeze(1)
+            elif isinstance(v, np.ndarray):
+                exp[k] = v[:, None, ...]
+            else:
+                exp[k] = v
+        self._want_step = True
+        try:
+            solver.cost.get_cost(exp, actions.to(device=dev, dtype=dt).unsqueeze(1))
+        finally:
+            self._want_step = False
+        n = (self._step[:, 0] + 1).clamp(1, int(max_blocks)).cpu().tolist()
+        self._exec_hist.extend(n)
+        return n
 
     def anchor_node(self, z0, g):
         """Index (into the nodes file) of the anchor anchor() picks for (z0, g); -1 when it is the goal itself."""
@@ -382,7 +409,10 @@ class PAAGoalCost(nn.Module):
             a = torch.stack([self.anchor(z0[b], g[b]) for b in range(g.shape[0])]).to(g.device)
         if self.agg == 'min':
             p = info_dict['predicted_emb'][:, :, H:].float()
-            da = (p - a[:, None, None]).pow(2).sum(-1).min(-1).values
+            d_steps = (p - a[:, None, None]).pow(2).sum(-1)  # (B, S, plan steps)
+            da = d_steps.min(-1).values
+            if self._want_step:
+                self._step = d_steps.argmin(-1)  # the plan step of the closest approach to the anchor
             if not self.handoff:
                 return da
             dg = (p - g[:, None, None]).pow(2).sum(-1).min(-1).values

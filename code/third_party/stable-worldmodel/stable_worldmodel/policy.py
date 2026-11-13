@@ -498,24 +498,32 @@ class WorldModelPolicy(BasePolicy):
 
             actions = outputs['actions']
             keep_horizon = self.cfg.receding_horizon
-            plan = actions[:, :keep_horizon]
-            rest = actions[:, keep_horizon:]
+            # Blocks of the plan each env executes before it plans again: keep_horizon, unless the objective asks for
+            # fewer (PAAGoalCost with exec_mode='pass': up to the block where the plan comes closest to its anchor).
+            obj = getattr(getattr(self.solver, 'cost', None), 'objective', None)
+            if getattr(obj, 'exec_mode', 'fixed') == 'pass':
+                n_exec = obj.exec_blocks(self.solver, sliced, actions, keep_horizon)
+            else:
+                n_exec = [keep_horizon] * len(replan_idx)
+            n_rest = actions.shape[1] - keep_horizon
 
-            if self.cfg.warm_start and rest.shape[1] > 0:
+            if self.cfg.warm_start and n_rest > 0:
                 if self._next_init is None:
                     self._next_init = torch.zeros(
-                        n_envs, rest.shape[1], rest.shape[2], dtype=rest.dtype
+                        n_envs, n_rest, actions.shape[2], dtype=actions.dtype
                     )
-                self._next_init[idx_tensor] = rest
+                # the part of each plan that follows its executed blocks
+                self._next_init[idx_tensor] = torch.stack(
+                    [actions[r, n : n + n_rest] for r, n in enumerate(n_exec)]
+                )
             elif not self.cfg.warm_start:
                 self._next_init = None
 
-            plan = plan.reshape(
-                len(replan_idx), self.flatten_receding_horizon, -1
-            )
-
             for row, env_i in enumerate(replan_idx):
-                self._action_buffer[env_i].extend(plan[row])
+                n = n_exec[row]
+                self._action_buffer[env_i].extend(
+                    actions[row, :n].reshape(n * self.cfg.action_block, -1)
+                )
 
         single_shape = self.env.single_action_space.shape
         is_discrete = 'Discrete' in type(self.env.single_action_space).__name__

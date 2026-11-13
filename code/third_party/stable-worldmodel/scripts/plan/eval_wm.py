@@ -166,6 +166,7 @@ def run(cfg: DictConfig):
                                     handoff_hops=cfg.get('paa_handoff_hops', 0),
                                     pool=cfg.get('paa_pool', False),
                                     budget=cfg.get('paa_budget', 8.0), alpha=cfg.get('paa_alpha', 0.25),
+                                    exec_mode=cfg.get('paa_exec', 'fixed'),
                                     drop_box=([cfg.paa_drop_x0, cfg.paa_drop_x1, cfg.paa_drop_y0, cfg.paa_drop_y1]
                                               if cfg.get('paa_drop_x0', None) is not None else None))
         elif cfg.get('ngc_nodes', None):  # NGC baseline (arXiv 2610.25013, concurrent work): graph-distance cost
