@@ -8,6 +8,8 @@
 #   gcbc gcivl gciql hilp pldm                        the policies / PLDM trained earlier on the same data, if their files exist
 #   pldmga    graph anchors on the PLDM model (its own latents), if PLDM exists
 #   DWM=1 adds DINO-WM (10 episodes per task, slow).  OGB_METHODS / OGB_SEEDS / OGB_TASKS choose a subset.
+#   OGB_METHODS may also name ga5, ga5k4, gah5 (graph anchors with a 5-block plan; see method()).  OGB_TRACE=1 saves the agent's
+#   positions and anchors of every run to trace_<run>.npz.
 # Result: $D/table.txt (success per task and the mean over tasks, per method), $D/summary.txt.
 # Finished runs are skipped, so the same command continues after a stop.  QUICK=1: 2 episodes, 100 steps (tests the code only).
 # usage: bash scripts/exp/exp31_ogb_goals.sh <out dir>
@@ -40,7 +42,8 @@ run() {  # name task seed overrides...
   grep -aq '\[summary\]' "$D/$name.log" 2>/dev/null && return
   log "$name start"
   ( cd $SW && $PY scripts/plan/eval_wm.py --config-name=pointmaze_large seed=$s eval.dataset_name=${N}_s${s}_t$k.h5 \
-      eval.goal_offset_steps=1 eval.eval_budget=$BUD eval.num_eval=$E +stats_dataset=pointmaze_large.h5 "$@" ${EVX:-} ) > "$D/$name.log" 2>&1 \
+      eval.goal_offset_steps=1 eval.eval_budget=$BUD eval.num_eval=$E +stats_dataset=pointmaze_large.h5 "$@" ${EVX:-} \
+      ${OGB_TRACE:+"+trace_npz=$D/trace_$name.npz" +trace_every=5} ) > "$D/$name.log" 2>&1 \
     || log "$name FAILED: $(why "$D/$name.log")"
   grep -aq '\[summary\]' "$D/$name.log" && echo "$name $(grep -a '\[summary\]' "$D/$name.log")" >> "$D/summary.txt"
   log "$name: $(grep -a '\[summary\]' "$D/$name.log" | grep -oE 'success_rate=[0-9.]+')"
@@ -52,6 +55,12 @@ method() {  # method task seed
   local m=$1 k=$2 s=$3 n=$1_t$2_s$3
   case $m in
     ga)       run $n $k $s policy=lewm_pml +paa_nodes=$NODES $GA ;;
+    # the same anchors with a 5-block plan, all of it executed before the next plan (the default plans 10 blocks and executes 5,
+    # which on PointMaze-Medium moves at about half the speed of the data; the official tasks allow 1,000 steps): minimum over the plan with the
+    # anchor 6 or 4 hops ahead, and the released last-step cost
+    ga5)      run $n $k $s policy=lewm_pml +paa_nodes=$NODES +paa_mode=fixed +paa_span=6 +metric_agg=min plan_config.horizon=5 +paa_noexclude=true ;;
+    ga5k4)    run $n $k $s policy=lewm_pml +paa_nodes=$NODES +paa_mode=fixed +paa_span=4 +metric_agg=min plan_config.horizon=5 +paa_noexclude=true ;;
+    gah5)     run $n $k $s policy=lewm_pml +paa_nodes=$NODES +paa_mode=fixed +paa_span=6 +metric_agg=last +paa_noexclude=true ;;
     random)   run $n $k $s policy=random ;;
     released) run $n $k $s policy=lewm_pml ;;
     relmin)   run $n $k $s policy=lewm_pml +metric_head=released +metric_agg=min plan_config.horizon=10 ;;

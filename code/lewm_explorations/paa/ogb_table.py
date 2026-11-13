@@ -8,10 +8,11 @@ import re
 import sys
 from collections import defaultdict
 
-ORDER = ['random', 'released', 'relmin', 'ga', 'gcbc', 'gcivl', 'gciql', 'hilp', 'pldm', 'pldmga', 'dwm']
+ORDER = ['random', 'released', 'relmin', 'ga', 'ga5', 'ga5k4', 'gah5', 'gcbc', 'gcivl', 'gciql', 'hilp', 'pldm', 'pldmga', 'dwm']
 NAME = {'random': 'random actions', 'released': 'LeWM', 'relmin': 'LeWM + min-over-plan', 'ga': 'Graph Anchors (LeWM)',
         'gcbc': 'GCBC', 'gcivl': 'GCIVL', 'gciql': 'GCIQL', 'hilp': 'HILP', 'pldm': 'PLDM', 'pldmga': 'Graph Anchors (PLDM)',
-        'dwm': 'DINO-WM (10 episodes)'}
+        'dwm': 'DINO-WM (10 episodes)', 'ga5': 'Graph Anchors, H=5', 'ga5k4': 'Graph Anchors, H=5, K=4',
+        'gah5': 'Graph Anchors, H=5, last'}
 
 
 def main():

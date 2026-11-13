@@ -12,6 +12,8 @@
 #   OGB_SEEDS=0 OGB_BASELINES=none bash scripts/hpc/run_ogb_goals.sh                           # + LeWM, LeWM with min-over-plan
 #   OGB_SEEDS=0 bash scripts/hpc/run_ogb_goals.sh                                              # + the policies and PLDM
 #   bash scripts/hpc/run_ogb_goals.sh                                                          # + seeds 1 and 2
+# Graph anchors with a 5-block plan, with traces, in a folder of its own so that it can run next to the job above:
+#   OUT=out/exp31b OGB_SEEDS=0 OGB_METHODS="ga5 gah5 ga5k4" OGB_BASELINES=none OGB_TRACE=1 bash scripts/hpc/run_ogb_goals.sh
 # Result to send back: out/exp31/ALL_results.tgz.     QUICK=1 bash scripts/hpc/run_ogb_goals.sh = a short plumbing test.
 set -uo pipefail
 H="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$H/../.." && pwd)"; cd "$ROOT"
