@@ -489,6 +489,22 @@ exp-32)  # DINO-WM with an image-only goal cost on PointMaze-Large, anchors on D
     bash "$ROOT/scripts/exp/exp32_dinowm_fair.sh" "$O" >> "$O/lane.log" 2>&1
     grep -a " A \| A2 \| B \| C \|exp32 FAILED" "$O/queue.log" 2>/dev/null | cut -c21- | while read -r l; do log "$l"; done
     ;;
+exp-40)  # released DINO-WM Push-T checkpoint at d=150 (20 pairs, seed 0), the empty DINO-WM cell of Table 1; part (1) of J18 only.
+         # Needs artifacts/dinowm/{config.yaml,dinowm_noprop_pusht_weights.ckpt} (from dinowm_files.tgz; DINO_DIR overrides)
+    DD="${DINO_DIR:-$ROOT/artifacts/dinowm}"
+    if [[ -f "$DD/config.yaml" && -f "$DD/dinowm_noprop_pusht_weights.ckpt" ]]; then
+      DM="$STABLEWM_HOME/checkpoints/dinowm_pusht"; mkdir -p "$DM" "$O/dinowm_pusht"
+      [[ -f "$DM/model_object.pt" ]] || ( cd "$SW" && python "$P/convert_lightning_ckpt.py" "$DD/config.yaml" \
+          "$DD/dinowm_noprop_pusht_weights.ckpt" "$DM/model_object.pt" ) > "$O/dinowm_pusht/dinowm_convert.log" 2>&1 \
+          || log "exp-40: DINO-WM convert FAILED: $(tail -1 "$O/dinowm_pusht/dinowm_convert.log")"
+      OFFS=50 bash "$R" pusht 0 "$O/pusht" setup >> "$O/setup.log" 2>&1
+      DOFFS=150 N_DINO="$(q 2 20)" DINO_CFG="$DD/config.yaml" DINO_CKPT="$DD/dinowm_noprop_pusht_weights.ckpt" \
+        EVX="$EVX solver.batch_size=${DINO_BS:-10}" bash "$B" pusht dinowm "$O/dinowm_pusht" >> "$O/lane.log" 2>&1
+      grep -h "success_rate" "$O/dinowm_pusht/queue.log" 2>/dev/null | tee -a "$L"
+    else
+      log "exp-40: no DINO-WM files in $DD (config.yaml, dinowm_noprop_pusht_weights.ckpt): skipped"
+    fi
+    ;;
 exp-39)  # the contact setting of graph anchors (K=2 temporal moves, episode-switch cost 3, H=2, plan executed to its closest
          # approach) on PointMaze-Large: d400 and stitched goals (budget 400), seeds 0/42/1; no training, needs J1's model
     if ! ls "$STABLEWM_HOME"/checkpoints/lewm_pml/*.pt > /dev/null 2>&1; then
