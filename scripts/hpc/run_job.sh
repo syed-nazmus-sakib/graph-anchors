@@ -489,6 +489,23 @@ exp-32)  # DINO-WM with an image-only goal cost on PointMaze-Large, anchors on D
     bash "$ROOT/scripts/exp/exp32_dinowm_fair.sh" "$O" >> "$O/lane.log" 2>&1
     grep -a " A \| A2 \| B \| C \|exp32 FAILED" "$O/queue.log" 2>/dev/null | cut -c21- | while read -r l; do log "$l"; done
     ;;
+exp-39)  # the contact setting of graph anchors (K=2 temporal moves, episode-switch cost 3, H=2, plan executed to its closest
+         # approach) on PointMaze-Large: d400 and stitched goals (budget 400), seeds 0/42/1; no training, needs J1's model
+    if ! ls "$STABLEWM_HOME"/checkpoints/lewm_pml/*.pt > /dev/null 2>&1; then
+      log "exp-39: no PointMaze-Large LeWM in $STABLEWM_HOME/checkpoints/lewm_pml (trained by J1): skipped"
+    else
+      keep_last "$STABLEWM_HOME/checkpoints/lewm_pml"; export PML_CKPT=lewm_pml
+      mkdir -p "$O/pml"; echo pointmaze_large.h5 > "$O/pml/dataset_name"
+      if OFFS=25 bash "$R" pml 0 "$O/pml" setup >> "$O/lane.log" 2>&1; then
+        TAG=_mp2sw3 HA=2 EVX="plan_config.receding_horizon=2 +paa_exec=pass +paa_switch=3" OFFS="400" SPANS=2 \
+          bash "$R" pml "0 42 1" "$O/pml" anchor >> "$O/lane.log" 2>&1
+        XB=400 XM=gacs bash "$R" pml "0 42 1" "$O/pml" cross >> "$O/lane.log" 2>&1
+        grep -h "success_rate" "$O/pml/queue.log" | tee -a "$L"
+      else
+        log "exp-39: setup failed (see $O/pml/queue.log)"
+      fi
+    fi
+    ;;
 exp-33)  # Metro-WM-style sub-goals (arXiv 2609.31868, our re-implementation) on our tasks: (h, H) sweep, the best setting on three
          # seeds, and the Metro graph with our search; one lane per environment, no training
     E33="${METRO_ENVS:-$(q 'tworoom pmm' 'pmm tworoom pml pusht')}"

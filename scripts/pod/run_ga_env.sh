@@ -100,6 +100,7 @@ if [ "$LANE" = cross ]; then  # E3 stitching test: goals from other episodes, fi
         released) A="" ;;
         relmin)   A="+metric_head=released +metric_agg=min plan_config.horizon=10" ;;
         ga)       A="+paa_nodes=$NODES +paa_mode=fixed +paa_span=6 +metric_agg=min plan_config.horizon=10" ;;
+        gacs)     A="+paa_nodes=$NODES +paa_mode=fixed +paa_span=2 +metric_agg=min plan_config.horizon=2 plan_config.receding_horizon=2 +paa_exec=pass +paa_switch=3" ;;  # contact setting
         ap)       A="+paa_nodes=$NODES +paa_mode=ap +metric_agg=last plan_config.horizon=1 plan_config.receding_horizon=1 +paa_ap_offset=$((bud / 2))" ;;
         ngc)      A="+ngc_nodes=$NODES +metric_agg=last" ;;
         gangc)    A="+ngc_nodes=$NODES +ngc_target=anchor +paa_span=6 +metric_agg=min plan_config.horizon=10" ;;
