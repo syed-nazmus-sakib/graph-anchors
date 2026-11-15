@@ -508,8 +508,9 @@ exp-40)  # released DINO-WM Push-T checkpoint at d=150 (20 pairs, seed 0), the e
 exp-39)  # the contact setting of graph anchors (K=2 temporal moves, episode-switch cost 3, H=2, plan executed to its closest
          # approach) on PointMaze-Large: d400 and stitched goals (budget 400), seeds 0/42/1; no training, needs J1's model.
          # Started next to J1: waits while J1 trains (up to 10 h), so one command can launch both.
+    sleep 120   # let a J1 started by the same command get going
     for _ in $(seq 1 120); do
-      pgrep -f "train/lewm.py data=pointmaze_large" > /dev/null || pgrep -f "scripts/train/lewm.py data=pointmaze_large" > /dev/null || break
+      pgrep -f "train/lewm.py data=pointmaze_large" > /dev/null || pgrep -f "run_job.sh J1( |$)" > /dev/null || break
       sleep 300
     done
     sleep 60
