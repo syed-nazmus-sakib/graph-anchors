@@ -279,6 +279,16 @@ a {
   gap: 0.45rem;
 }
 
+@media (max-width: 720px) {
+  .top-bar-inner {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+  .nav-links {
+    display: none;
+  }
+}
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -331,7 +341,10 @@ a {
 .eyebrow {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 0.45rem;
+  max-inline-size: 100%;
   padding: 0.28rem 0.85rem;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
@@ -636,8 +649,8 @@ a {
 }
 
 .section-deferred {
-  content-visibility: auto;
-  contain-intrinsic-size: auto none auto 750px;
+  /* Keep full layout stability for direct hash-link jumps (#videos, #results, #citation) */
+  contain: style;
 }
 
 .section-alt {
