@@ -1,4 +1,4 @@
-"""Metro-WM-style sub-goals (code/lewm_explorations/paa/metro_graph.py) on a toy line world.  Needs torch and scipy; skipped without."""
+"""Metro-WM-style sub-goals (graph_anchors/metro_graph.py) on a toy line world.  Needs torch and scipy; skipped without."""
 
 import sys
 import unittest
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "code" / "lewm_explorations" / "paa"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "graph_anchors"))
 try:
     import scipy  # noqa: F401
     import torch

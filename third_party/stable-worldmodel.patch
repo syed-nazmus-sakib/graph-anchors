@@ -1,0 +1,763 @@
+diff --git c/scripts/plan/eval_wm.py w/scripts/plan/eval_wm.py
+index 49dd4f9..ad8730e 100644
+--- c/scripts/plan/eval_wm.py
++++ w/scripts/plan/eval_wm.py
+@@ -4,6 +4,7 @@ import os
+ 
+ os.environ['MUJOCO_GL'] = 'egl'
+ 
++import sys
+ import time
+ from pathlib import Path
+ 
+@@ -17,11 +18,22 @@ from torchvision.transforms import v2 as transforms
+ import stable_worldmodel as swm
+ 
+ 
++def pix_shift(cfg):
++    """exp-27: test-time appearance change, a warm tint of strength +pix_shift on every observed and goal frame; the
++    graph keeps the latents of the unshifted training frames."""
++    s = float(cfg.get('pix_shift', 0))
++    if s <= 0:
++        return []
++    tint = torch.tensor([1.0, 1 - s / 2, 1 - s]).view(3, 1, 1)
++    return [transforms.Lambda(lambda x: x * tint.to(x.device, x.dtype))]
++
++
+ def img_transform(cfg, dtype=torch.float32):
+     transform = transforms.Compose(
+         [
+             transforms.ToImage(),
+             transforms.ToDtype(dtype, scale=True),
++            *pix_shift(cfg),
+             transforms.Normalize(**spt.data.dataset_stats.ImageNet),
+             transforms.Resize(size=cfg.eval.img_size),
+         ]
+@@ -66,6 +78,13 @@ def get_dataset(cfg, dataset_name):
+ @hydra.main(version_base=None, config_path='./config', config_name='pusht')
+ def run(cfg: DictConfig):
+     """Run evaluation of dinowm vs random policy."""
++    # RESERVE_GB=<n>: claim n GB of GPU memory at start and keep it in PyTorch's cache (freed tensors stay reserved for
++    # this process), so other jobs on a shared GPU cannot take it while the model and graph load.  Fails at once if
++    # the memory is not there, instead of minutes later in the middle of planning.
++    if os.environ.get('RESERVE_GB') and torch.cuda.is_available():
++        gb = float(os.environ['RESERVE_GB'])
++        torch.empty(int(gb * 2**30), dtype=torch.uint8, device='cuda')  # freed at once, kept by the caching allocator
++        print(f'[reserve] {gb:.0f} GB reserved: {torch.cuda.memory_reserved() / 2**30:.1f} GB held', flush=True)
+     assert (
+         cfg.plan_config.horizon * cfg.plan_config.action_block
+         <= cfg.eval.eval_budget
+@@ -83,10 +102,12 @@ def run(cfg: DictConfig):
+     }
+ 
+     dataset = get_dataset(cfg, cfg.eval.dataset_name)
+-    stats_dataset = dataset  # get_dataset(cfg, cfg.dataset.stats)
++    # stats_dataset=<name>: action / state normalisation from another dataset.  Needed when the evaluation file holds start
++    # and goal frames only (official OGBench goals, ogb_tasks_data.py): the model was trained with the training data's statistics.
++    stats_dataset = get_dataset(cfg, cfg.stats_dataset) if cfg.get('stats_dataset', None) else dataset
+     col_name = episode_col(dataset)
+     ep_indices, _ = np.unique(
+-        stats_dataset.get_col_data(col_name), return_index=True
++        dataset.get_col_data(col_name), return_index=True
+     )
+ 
+     process = {}
+@@ -104,9 +125,13 @@ def run(cfg: DictConfig):
+ 
+     # -- run evaluation
+     policy = cfg.get('policy', 'random')
++    objective = None   # stays None for policy=random (no planner): the checks after the rollout must not fail on it
+ 
+     if policy != 'random':
+-        model = swm.wm.utils.load_pretrained(cfg.policy)
++        if cfg.get('policy_object', None):  # a module saved with torch.save by our own training runs
++            model = torch.load(cfg.policy_object, map_location='cpu', weights_only=False)
++        else:
++            model = swm.wm.utils.load_pretrained(cfg.policy)
+         if cfg.get('bf16', False):
+             model = model.to(torch.bfloat16)
+         model = model.to('cuda')
+@@ -125,11 +150,65 @@ def run(cfg: DictConfig):
+             model.predictor = torch.compile(model.predictor)
+         config = swm.PlanConfig(**cfg.plan_config)
+         objective = hydra.utils.instantiate(cfg.objective)
++        if cfg.get('paa_nodes', None):  # PAA: aim CEM at graph anchors (graph_anchors/paa_cost.py)
++            sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'graph_anchors'))
++            from paa_cost import PAAGoalCost
++
++            objective = PAAGoalCost(cfg.paa_nodes, mode=cfg.get('paa_mode', 'fixed'), span=cfg.get('paa_span', 4),
++                                    max_hops=cfg.get('paa_max_hops', 12), head=cfg.get('paa_head', None),
++                                    tau=cfg.get('paa_tau', 0.5), pess=cfg.get('paa_pess', 1.0),
++                                    agg=cfg.get('metric_agg', 'min'), ap_offset=cfg.get('paa_ap_offset', cfg.eval.goal_offset_steps),
++                                    ap_step=cfg.plan_config.action_block * cfg.plan_config.receding_horizon,
++                                    ap_k=cfg.get('ap_k', 8), gap_cal=cfg.get('gap_cal', False),
++                                    knn=cfg.get('paa_knn', 10), thr_q=cfg.get('paa_thr_q', 0.5), frac=cfg.get('paa_frac', 1.0),
++                                    switch=cfg.get('paa_switch', 1.0),
++                                    handoff=cfg.get('paa_handoff', False),
++                                    handoff_hops=cfg.get('paa_handoff_hops', 0),
++                                    pool=cfg.get('paa_pool', False),
++                                    budget=cfg.get('paa_budget', 8.0), alpha=cfg.get('paa_alpha', 0.25),
++                                    exec_mode=cfg.get('paa_exec', 'fixed'),
++                                    drop_box=([cfg.paa_drop_x0, cfg.paa_drop_x1, cfg.paa_drop_y0, cfg.paa_drop_y1]
++                                              if cfg.get('paa_drop_x0', None) is not None else None))
++        elif cfg.get('ngc_nodes', None):  # NGC baseline (arXiv 2610.25013, concurrent work): graph-distance cost
++            sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'graph_anchors'))
++            from ngc_cost import NGCObjective
++
++            objective = NGCObjective(cfg.ngc_nodes, n_nodes=cfg.get('ngc_n', 5000), neighbors=cfg.get('ngc_k', 15),
++                                     anchors=cfg.get('ngc_anchors', 4), seed=cfg.get('ngc_seed', 0),
++                                     target=cfg.get('ngc_target', 'goal'), span=cfg.get('paa_span', 6),
++                                     agg=cfg.get('metric_agg', 'last'), frac=cfg.get('paa_frac', 1.0))
++        elif cfg.get('metric_head', None):  # method C: learned task-aligned goal cost (scripts/plan/metric_cost.py)
++            from metric_cost import MetricGoalCost
++
++            objective = MetricGoalCost(cfg.metric_head, cfg.get('metric_mix', 0.0), cfg.get('metric_agg', 'last'))
+         cost = swm.planning.ShootingCostEvaluator(model, objective)
+         solver = hydra.utils.instantiate(cfg.solver, cost=cost)
+         policy = swm.policy.WorldModelPolicy(
+             solver=solver, config=config, process=process, transform=transform
+         )
++        if cfg.get('ff', False):  # learned goal-conditioned policy (GCBC / GCIVL / GCIQL / HILP): same pairs and scoring
++            policy = swm.policy.FeedForwardPolicy(model=model, process=process, transform=transform)
++            if cfg.get('graph_waypoints', False):  # graph + policy baseline: waypoints from the latent graph
++                sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'graph_anchors'))
++                from paa_cost import PAAGoalCost
++                from graph_policy import GraphWaypointPolicy
++
++                enc = swm.wm.utils.load_pretrained(cfg.graph_wm).to('cuda').eval().requires_grad_(False)
++                graph = PAAGoalCost(cfg.graph_nodes, mode='fixed', span=cfg.get('paa_span', 6),
++                                    max_hops=cfg.get('paa_max_hops', 12), knn=cfg.get('paa_knn', 10))
++                policy = GraphWaypointPolicy(policy, enc, graph, dataset, transform['pixels'],
++                                             every=cfg.get('waypoint_every', 5), img_dtype=img_dtype,
++                                             hold=cfg.get('waypoint_hold', 0))
++                print(f'[graph_waypoints] {cfg.graph_wm} graph, span {graph.span}, waypoint every '
++                      f'{policy.every} steps', flush=True)
++            if cfg.get('value_graph', False):  # exp-24 / exp-25: graph and subgoals from the policy's value head, no world model
++                sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'graph_anchors'))
++                from value_graph import ValueGraph, ValueGraphPolicy
++
++                vg = ValueGraph(model, cfg.graph_nodes, dataset, policy._prepare_info, mode=cfg.get('vg_mode', 'value'),
++                                tau=cfg.get('vg_tau', 4.0), n_nodes=cfg.get('vg_nodes', 2000), cand=cfg.get('vg_cand', 50),
++                                gamma=cfg.get('vg_gamma', 0.99))
++                policy = ValueGraphPolicy(policy, vg, dataset, every=cfg.get('waypoint_every', 5), replan=cfg.get('vg_replan', 0.0))
+ 
+     else:
+         policy = swm.policy.RandomPolicy()
+@@ -141,6 +220,8 @@ def run(cfg: DictConfig):
+         if cfg.policy != 'random'
+         else Path(__file__).parent
+     )
++    if cfg.get('video_dir', None):  # one folder per run (parallel runs of the same policy would overwrite env_*.mp4)
++        results_path = Path(cfg.video_dir)
+ 
+     # sample the episodes and the starting indices
+     episode_len = get_episodes_length(dataset, ep_indices)
+@@ -157,7 +238,11 @@ def run(cfg: DictConfig):
+     # remove all the lines of dataset for which dataset['step_idx'] > max_start_per_row
+     valid_mask = dataset.get_col_data('step_idx') <= max_start_per_row
+     valid_indices = np.nonzero(valid_mask)[0]
+-    print(valid_mask.sum(), 'valid starting points found for evaluation.')
++    if cfg.get('exclude_eps', None):  # PAA harvest: never sample from the evaluation pairs' episodes
++        ex = np.load(cfg.exclude_eps)
++        valid_indices = valid_indices[~np.isin(dataset.get_col_data(col_name)[valid_indices], ex)]
++        print(f'excluded {len(ex)} episodes', flush=True)
++    print(len(valid_indices), 'valid starting points found for evaluation.')
+ 
+     g = np.random.default_rng(cfg.seed)
+     random_episode_indices = g.choice(
+@@ -175,11 +260,76 @@ def run(cfg: DictConfig):
+     eval_episodes = dataset.get_col_data(col_name)[random_episode_indices]
+     eval_start_idx = dataset.get_col_data('step_idx')[random_episode_indices]
+ 
++    goal_eps = goal_steps = None
++    if cfg.get('cross_goal', False):  # stitching test: each goal is a random state of a different episode
++        g2 = np.random.default_rng(cfg.seed + 1000)
++        all_eps = dataset.get_col_data(col_name)
++        all_steps = dataset.get_col_data('step_idx')
++        goal_eps, goal_steps = [], []
++        for e in eval_episodes:
++            while True:
++                j = int(g2.integers(len(all_eps)))
++                if all_eps[j] != e:
++                    break
++            goal_eps.append(int(all_eps[j])); goal_steps.append(int(all_steps[j]))
++        goal_eps, goal_steps = np.asarray(goal_eps), np.asarray(goal_steps)
++        world.cross_goal = (goal_eps, goal_steps)
++        print(f'[cross_goal] goals from other episodes, budget {cfg.eval.eval_budget}', flush=True)
++    if cfg.get('pairs_npz', None):  # record the sampled start-goal pairs (PAA: exclusion lists, paired analysis)
++        np.savez(cfg.pairs_npz, ep=np.asarray(eval_episodes), start=np.asarray(eval_start_idx),
++                 offset=cfg.eval.goal_offset_steps, seed=cfg.seed,
++                 **({} if goal_eps is None else {'goal_ep': goal_eps, 'goal_step': goal_steps}))
++        if cfg.get('pairs_only', False):
++            print('[pairs] saved', cfg.pairs_npz, flush=True)
++            return
+     if len(eval_episodes) < cfg.eval.num_eval:
+         raise ValueError(
+             'Not enough episodes with sufficient length for evaluation.'
+         )
+ 
++    # PAA: drop the evaluation pairs' episodes (paa_noexclude: the graph comes from another dataset, e.g. random-play data)
++    if hasattr(policy, 'solver') and hasattr(objective, 'set_exclude') and not cfg.get('paa_noexclude', False):
++        objective.set_exclude(np.unique(eval_episodes if goal_eps is None else np.concatenate([eval_episodes, goal_eps])))
++    if hasattr(policy, 'graph') and not cfg.get('paa_noexclude', False):  # graph-waypoint policy: same exclusion
++        policy.graph.set_exclude(np.unique(eval_episodes if goal_eps is None else np.concatenate([eval_episodes, goal_eps])))
++    _dec_t = []  # wall time per policy decision (ms), CUDA-synchronised; printed in the summary line
++    _get_action = policy.get_action
++    # Live progress, one line every PROGRESS_SEC seconds (default 60; 0 = off): step, pairs solved so far, time per step and
++    # an ETA.  The ETA assumes every step until the budget; the run ends earlier once all pairs are solved.
++    _prog = {'t0': time.perf_counter(), 'last': 0.0, 'n': 0, 'solved': None,
++             'every': float(os.environ.get('PROGRESS_SEC', '60')), 'budget': int(cfg.eval.eval_budget)}
++
++    def _fmt_t(sec):
++        sec = int(sec); return f'{sec // 3600}h{sec % 3600 // 60:02d}m' if sec >= 3600 else f'{sec // 60}m{sec % 60:02d}s'
++
++    def _progress():
++        _prog['n'] += 1
++        term = getattr(world, 'terminateds', None)
++        if term is not None:
++            _prog['solved'] = np.asarray(term, bool) | (_prog['solved'] if _prog['solved'] is not None else False)
++        now = time.perf_counter()
++        if _prog['every'] <= 0 or now - _prog['last'] < _prog['every']:
++            return
++        _prog['last'] = now
++        n, b, el = _prog['n'], _prog['budget'], now - _prog['t0']
++        solved = 0 if _prog['solved'] is None else int(np.sum(_prog['solved']))
++        per = el / n
++        mem = f' | GPU {torch.cuda.max_memory_allocated() / 2**30:.1f} GB peak' if torch.cuda.is_available() else ''
++        print(f'[progress] step {n}/{b} ({100 * n / b:.0f}%) | solved {solved}/{world.num_envs} | {per:.1f} s/step | '
++              f'elapsed {_fmt_t(el)} | ETA <= {_fmt_t(per * max(b - n, 0))}{mem}', flush=True)
++
++    def _timed_get_action(*a, **k):
++        _progress()
++        if torch.cuda.is_available():
++            torch.cuda.synchronize()
++        t0 = time.perf_counter()
++        out = _get_action(*a, **k)
++        if torch.cuda.is_available():
++            torch.cuda.synchronize()
++        _dec_t.append(1e3 * (time.perf_counter() - t0))
++        return out
++
++    policy.get_action = _timed_get_action
+     world.set_policy(policy)
+ 
+     results_path.mkdir(parents=True, exist_ok=True)
+@@ -216,6 +366,82 @@ def run(cfg: DictConfig):
+             )
+         print('Warmup done.')
+ 
++    trace = None
++    if cfg.get('trace_npz', None):  # diagnosis: every `trace_every` steps, small numeric infos + latent distance to goal
++        trace, every = {'t': []}, int(cfg.get('trace_every', 5))
++        tstate = {'n': 0, 'zg': None}
++
++        def _enc(arr):
++            arr = np.asarray(arr)
++            arr = arr[:, -1] if arr.ndim == 5 else arr
++            with torch.no_grad():
++                im = torch.stack([transform['pixels'](np.ascontiguousarray(x)) for x in arr]).to('cuda', img_dtype)
++                return model.encode({'pixels': im[:, None]})['emb'][:, 0].float()
++
++        def trace_fn(w):
++            n = tstate['n']; tstate['n'] += 1
++            if n % every:
++                return
++            if tstate['zg'] is None:
++                tstate['zg'] = _enc(w.infos['goal'])
++            trace['t'].append(n)
++            trace.setdefault('lat_dist', []).append(((_enc(w.infos['pixels']) - tstate['zg']) ** 2).sum(-1).cpu().numpy())
++            trace.setdefault('done', []).append(np.asarray(w.terminateds).copy())
++            if cfg.get('trace_anchor', False) and objective is not None and hasattr(objective, 'goal_node_index'):
++                try:  # logging only: each env's current anchor node (index into the nodes file; -1: the goal; -2: none yet)
++                    if 'gnode' not in tstate:
++                        emb = getattr(objective, 'emb', None)
++                        tstate['gnode'] = [objective.goal_node_index(tstate['zg'][e].to(emb.device, emb.dtype)) for e in range(len(tstate['zg']))]
++                    cur = getattr(objective, 'cur_anchor', {})
++                    trace.setdefault('anchor_node', []).append(np.asarray([cur.get(gn, -2) for gn in tstate['gnode']], dtype=np.int64))
++                except Exception as exc:
++                    if not tstate.get('anchor_warned'):
++                        print(f'[trace] anchor logging off: {exc!r}', flush=True); tstate['anchor_warned'] = True
++            for k, v in w.infos.items():
++                if k in ('pixels', 'goal') or not isinstance(v, np.ndarray) or v.dtype.kind not in 'fiub':
++                    continue
++                last = v[:, -1] if v.ndim >= 2 and v.shape[0] == w.num_envs and v.shape[1] > 0 else v
++                if last.shape[0] == w.num_envs and last[0].size <= 64:
++                    trace.setdefault(k, []).append(np.asarray(last, dtype=np.float32).copy())
++
++        world.trace_fn = trace_fn
++
++    if cfg.get('kidnap_at', None):  # stress test: after kidnap_at env steps, every unsolved env is put back at its start
++        # state (the first callable of the config, e.g. set_state(state=proprio)); budget and goal are unchanged.  A
++        # planner that keeps an elapsed-step clock (AP) now underestimates the remaining distance; replanning from the
++        # current state does not.  The frame the planner sees is refreshed by the next environment step.
++        K = int(cfg.kidnap_at)
++        spec = OmegaConf.to_container(cfg.eval.callables, resolve=True)[0]
++        start_rows = [dataset.load_chunk(np.array([e]), np.array([s]), np.array([s + 1]))[0]
++                      for e, s in zip(eval_episodes, eval_start_idx)]
++
++        def _v(row, col):
++            v = row[col]
++            v = v.numpy() if hasattr(v, 'numpy') else np.asarray(v)
++            return np.asarray(v)[-1]
++
++        kst = {'n': 0, 'moved': 0, 'solved': None}
++        prev_fn = getattr(world, 'trace_fn', None)
++
++        def kidnap_fn(w):
++            if prev_fn is not None:
++                prev_fn(w)
++            kst['n'] += 1
++            term = np.asarray(w.terminateds, bool).ravel()
++            kst['solved'] = term if kst['solved'] is None else (kst['solved'] | term)  # success is sticky
++            if kst['n'] == K:
++                done = kst['solved']
++                for i in range(w.num_envs):
++                    if done[i]:
++                        continue
++                    args = {a: _v(start_rows[i], d['value']) for a, d in spec.get('args', {}).items()
++                            if d.get('value') in start_rows[i]}
++                    getattr(w.envs.envs[i].unwrapped, spec['method'])(**args)
++                    kst['moved'] += 1
++                print(f'[kidnap] step {K}: {kst["moved"]} unsolved envs put back at their start state', flush=True)
++
++        world.trace_fn = kidnap_fn
++
+     start_time = time.time()
+     with autocast_ctx:
+         metrics = world.evaluate(
+@@ -232,7 +458,38 @@ def run(cfg: DictConfig):
+     end_time = time.time()
+ 
+     print(metrics)
++    if trace is not None:
++        alog = np.asarray(getattr(objective, 'anchor_log', []), dtype=np.int64).reshape(-1, 3)
++        wlog = np.asarray(getattr(policy, 'log', []), dtype=np.int64).reshape(-1, 3)  # graph-waypoint policy
++        np.savez(cfg.trace_npz, success=np.asarray(metrics['episode_successes']), ep=np.asarray(eval_episodes), waypoint_log=wlog,
++                 start=np.asarray(eval_start_idx), offset=cfg.eval.goal_offset_steps, anchor_log=alog,
++                 **{f'tr_{k}': np.stack(v) for k, v in trace.items() if len(v)})
++        print(f'[trace] {cfg.trace_npz} keys={sorted(trace)}', flush=True)
++    if cfg.get('dump_npz', None):  # PAA harvest: final-frame latents for label-free attainment labels
++        px = np.asarray(world.infos['pixels'])
++        px = px[:, -1] if px.ndim == 5 else px
++        with torch.no_grad():
++            imgs = torch.stack([transform['pixels'](np.ascontiguousarray(x)) for x in px]).to('cuda', img_dtype)
++            final_emb = model.encode({'pixels': imgs[:, None]})['emb'][:, 0].float().cpu().numpy()
++        np.savez(cfg.dump_npz, final_emb=final_emb, success=np.asarray(metrics['episode_successes']),
++                 ep=np.asarray(eval_episodes), start=np.asarray(eval_start_idx),
++                 offset=cfg.eval.goal_offset_steps, budget=cfg.eval.eval_budget)
++        print(f'[dump] {cfg.dump_npz}', flush=True)
+     print(f'[eval] videos saved to {results_path.resolve()}')
++    if hasattr(policy, 'stats'):  # graph-waypoint policy: how often the goal was replaced and waypoints were reached
++        print('[waypoints] ' + ' '.join(f'{k}={v:.3f}' for k, v in policy.stats().items()), flush=True)
++    if hasattr(objective, 'timing'):  # graph build / shortest-path time
++        print('[graph_timing] ' + ' '.join(f'{k}={v:.3f}' for k, v in objective.timing().items()), flush=True)
++    eps_bits = ''.join('1' if bool(x) else '0' for x in np.asarray(metrics['episode_successes']).ravel())
++    ms = np.asarray(_dec_t[1:] if len(_dec_t) > 1 else _dec_t, dtype=np.float64)  # first decision includes warm-up
++    print(  # one-line summary for the method C queues
++        f'[summary] env={cfg.world.env_name} seed={cfg.seed} goal_offset={cfg.eval.goal_offset_steps} '
++        f'budget={cfg.eval.eval_budget} horizon={cfg.plan_config.horizon} '
++        f'metric={Path(str(cfg.get("metric_head", "none"))).stem} agg={cfg.get("metric_agg", "last")} '
++        f'paa={cfg.get("paa_mode", "none") if cfg.get("paa_nodes", None) else "none"}:{cfg.get("paa_budget", "-") if cfg.get("paa_mode", "") == "metro" else cfg.get("paa_span", "-")}:{Path(str(cfg.get("paa_head", "none"))).stem} '
++        f'success_rate={metrics["success_rate"]:.1f} n={cfg.eval.num_eval} '
++        f'ms_per_decision={float(ms.mean()) if len(ms) else float("nan"):.1f} decisions={len(_dec_t)} eps={eps_bits}'
++    )
+ 
+     results_path = results_path / cfg.output.filename
+     results_path.parent.mkdir(parents=True, exist_ok=True)
+diff --git c/scripts/train/gcbc.py w/scripts/train/gcbc.py
+index 7b3cdee..5e3b670 100644
+--- c/scripts/train/gcbc.py
++++ w/scripts/train/gcbc.py
+@@ -338,7 +338,7 @@ def run(cfg):
+         trainer=trainer,
+         module=gcbc_policy,
+         data=data,
+-        ckpt_path=f'{cache_dir}/{cfg.output_model_name}_weights.ckpt',
++        ckpt_path=(f'{cache_dir}/{cfg.output_model_name}_weights.ckpt' if __import__('os').path.exists(f'{cache_dir}/{cfg.output_model_name}_weights.ckpt') else None),
+     )
+     manager()
+ 
+diff --git c/scripts/train/gciql.py w/scripts/train/gciql.py
+index 7e77671..e8fb598 100644
+--- c/scripts/train/gciql.py
++++ w/scripts/train/gciql.py
+@@ -853,6 +853,8 @@ class SaveCkptCallback(Callback):
+             config=self.cfg,
+             filename=f'weights_epoch_{epoch}.pt',
+         )
++        # whole module (our own training output): eval_wm.py loads it with +policy_object=<path>
++        torch.save(model, swm.data.utils.get_cache_dir(sub_folder='checkpoints') / self.run_name / 'model_object.pt')
+ 
+ 
+ # ============================================================================
+diff --git c/scripts/train/gcivl.py w/scripts/train/gcivl.py
+index 6d98896..57a876b 100644
+--- c/scripts/train/gcivl.py
++++ w/scripts/train/gcivl.py
+@@ -798,6 +798,8 @@ class SaveCkptCallback(Callback):
+             config=self.cfg,
+             filename=f'weights_epoch_{epoch}.pt',
+         )
++        # whole module (our own training output): eval_wm.py loads it with +policy_object=<path>
++        torch.save(model, swm.data.utils.get_cache_dir(sub_folder='checkpoints') / self.run_name / 'model_object.pt')
+ 
+ 
+ # ============================================================================
+diff --git c/scripts/train/hilp.py w/scripts/train/hilp.py
+index 2e1be31..89ab56a 100644
+--- c/scripts/train/hilp.py
++++ w/scripts/train/hilp.py
+@@ -41,6 +41,7 @@ def get_data(cfg):
+             spt.data.transforms.Resize(img_size, source=key, target=target),
+         )
+ 
++    has_proprio = cfg.get('has_proprio', True)  # false: the dataset has no proprio column (Reacher)
+     cache_dir = os.environ.get('LOCAL_DATASET_DIR', None)
+     print(
+         f'Loading dataset "{cfg.dataset_name}" from {"local cache: " + cache_dir if cache_dir else "default location"}'
+@@ -52,20 +53,22 @@ def get_data(cfg):
+         frameskip=cfg.frameskip,
+         transform=None,
+         cache_dir=cache_dir,
+-        keys_to_load=['pixels', 'action', 'proprio'],
+-        keys_to_cache=['action', 'proprio'],
++        keys_to_load=['pixels', 'action'] + (['proprio'] if has_proprio else []),
++        keys_to_cache=['action'] + (['proprio'] if has_proprio else []),
+     )
+ 
+     norm_action_transform = get_column_normalizer(dataset, 'action', 'action')
+-    norm_proprio_transform = get_column_normalizer(
+-        dataset, 'proprio', 'proprio'
++    norm_proprio = (
++        [get_column_normalizer(dataset, 'proprio', 'proprio')]
++        if has_proprio
++        else []
+     )
+ 
+     # Apply transforms to all steps and goal observations
+     transform = spt.data.transforms.Compose(
+         get_img_pipeline('pixels', 'pixels', cfg.image_size),
+         norm_action_transform,
+-        norm_proprio_transform,
++        *norm_proprio,
+     )
+ 
+     dataset.transform = transform
+@@ -81,7 +84,7 @@ def get_data(cfg):
+         goal_probabilities=goal_probs,
+         gamma=cfg.goal_gamma,
+         current_goal_offset=cfg.dinowm.history_size,
+-        goal_keys={'pixels': 'goal_pixels', 'proprio': 'goal_proprio'},
++        goal_keys={'pixels': 'goal_pixels', **({'proprio': 'goal_proprio'} if has_proprio else {})},
+         seed=cfg.seed,
+     )
+ 
+@@ -207,19 +210,23 @@ def get_hilp_value_model(cfg):
+                 'b 1 c h w -> b t c h w',
+                 t=obs_pixels.shape[1],
+             )
+-            obs_proprio = batch['proprio'][
+-                :, : cfg.dinowm.history_size
+-            ]  # (B, T, D)
+-            goal_proprio_repeated = repeat(
+-                batch['goal_proprio'], 'b 1 d -> b t d', t=obs_proprio.shape[1]
+-            )
+             pixels_match = (obs_pixels == goal_pixels_repeated).all(
+                 dim=(2, 3, 4)
+             )  # (B, T)
+-            proprio_match = (obs_proprio == goal_proprio_repeated).all(
+-                dim=2
+-            )  # (B, T)
+-            eq_mask = pixels_match & proprio_match  # (B, T)
++            eq_mask = pixels_match  # (B, T)
++            if 'proprio' in batch:  # datasets without a proprio column match on pixels alone
++                obs_proprio = batch['proprio'][
++                    :, : cfg.dinowm.history_size
++                ]  # (B, T, D)
++                goal_proprio_repeated = repeat(
++                    batch['goal_proprio'],
++                    'b 1 d -> b t d',
++                    t=obs_proprio.shape[1],
++                )
++                proprio_match = (obs_proprio == goal_proprio_repeated).all(
++                    dim=2
++                )  # (B, T)
++                eq_mask = pixels_match & proprio_match  # (B, T)
+             # masks are 1 if non-terminal, 0 if terminal (at goal)
+             masks = (~eq_mask).float().unsqueeze(-1)
+             # rewards are -1 if non-terminal, 0 if terminal
+@@ -287,30 +294,34 @@ def get_hilp_value_model(cfg):
+                 :, last_hist_idx
+             ]  # (B, C, H, W)
+             goal_pixels_squeezed = batch['goal_pixels'][:, 0]  # (B, C, H, W)
+-            last_frame_proprio = batch['proprio'][:, last_hist_idx]  # (B, D)
+-            goal_proprio_squeezed = batch['goal_proprio'][:, 0]  # (B, D)
+ 
+             # Compare last frame of target (last frame of clip) with goal
+             # This is what value_target is computed from
+             last_target_pixels = batch['pixels'][:, -1]  # (B, C, H, W)
+-            last_target_proprio = batch['proprio'][:, -1]  # (B, D)
+ 
+             # Per-sample checks (last frame of history)
+             pixels_match_per_sample = (
+                 last_frame_pixels == goal_pixels_squeezed
+             ).all(dim=(1, 2, 3))  # (B,)
+-            proprio_match_per_sample = (
+-                last_frame_proprio == goal_proprio_squeezed
+-            ).all(dim=1)  # (B,)
++            if 'proprio' in batch:
++                goal_proprio_squeezed = batch['goal_proprio'][:, 0]  # (B, D)
++                proprio_match_per_sample = (
++                    batch['proprio'][:, last_hist_idx] == goal_proprio_squeezed
++                ).all(dim=1)  # (B,)
++            else:
++                proprio_match_per_sample = torch.ones_like(pixels_match_per_sample)
+             both_match = pixels_match_per_sample & proprio_match_per_sample
+ 
+             # Per-sample checks (last frame of target/clip)
+             target_pixels_match = (
+                 last_target_pixels == goal_pixels_squeezed
+             ).all(dim=(1, 2, 3))  # (B,)
+-            target_proprio_match = (
+-                last_target_proprio == goal_proprio_squeezed
+-            ).all(dim=1)  # (B,)
++            if 'proprio' in batch:
++                target_proprio_match = (
++                    batch['proprio'][:, -1] == goal_proprio_squeezed
++                ).all(dim=1)  # (B,)
++            else:
++                target_proprio_match = torch.ones_like(target_pixels_match)
+             target_both_match = target_pixels_match & target_proprio_match
+ 
+             # Check embedding components separately
+@@ -768,6 +779,8 @@ class SaveCkptCallback(Callback):
+             config=self.cfg,
+             filename=f'weights_epoch_{epoch}.pt',
+         )
++        # whole module (our own training output): eval_wm.py loads it with +policy_object=<path>
++        torch.save(model, swm.data.utils.get_cache_dir(sub_folder='checkpoints') / self.run_name / 'model_object.pt')
+ 
+ 
+ # ============================================================================
+@@ -805,18 +818,19 @@ def run(cfg):
+             trainer=trainer,
+             module=hilp_value_model,
+             data=data,
+-            ckpt_path=f'{cache_dir}/{cfg.output_model_name}_value_weights.ckpt',
++            ckpt_path=(f'{cache_dir}/{cfg.output_model_name}_value_weights.ckpt' if __import__('os').path.exists(f'{cache_dir}/{cfg.output_model_name}_value_weights.ckpt') else None),
+         )
+         manager()
+ 
+     # Extract policy from trained value function
+     wandb_logger_policy = setup_pl_logger(cfg, postfix='_policy')
+ 
+-    # load value function weights
+-    checkpoint = torch.load(
+-        f'{cache_dir}/{cfg.output_model_name}_value_weights.ckpt'
+-    )
+-    hilp_value_model.load_state_dict(checkpoint['state_dict'])
++    # load value function weights only when value training was skipped (the trained model is in memory)
++    if not cfg.get('train_value', True):
++        checkpoint = torch.load(
++            f'{cache_dir}/{cfg.output_model_name}_value_weights.ckpt'
++        )
++        hilp_value_model.load_state_dict(checkpoint['state_dict'])
+ 
+     hilp_actor_model = get_hilp_actor_model(cfg, hilp_value_model)
+ 
+@@ -838,7 +852,7 @@ def run(cfg):
+         trainer=trainer,
+         module=hilp_actor_model,
+         data=data,
+-        ckpt_path=f'{cache_dir}/{cfg.output_model_name}_policy_weights.ckpt',
++        ckpt_path=(f'{cache_dir}/{cfg.output_model_name}_policy_weights.ckpt' if __import__('os').path.exists(f'{cache_dir}/{cfg.output_model_name}_policy_weights.ckpt') else None),
+     )
+     manager()
+ 
+diff --git c/scripts/train/prejepa.py w/scripts/train/prejepa.py
+index 45069dc..bba10c5 100644
+--- c/scripts/train/prejepa.py
++++ w/scripts/train/prejepa.py
+@@ -80,6 +80,8 @@ class SaveCkptCallback(Callback):
+             config=self.cfg,
+             filename=f'weights_epoch_{epoch}.pt',
+         )
++        # whole module (our own training output): eval_wm.py loads it with +policy_object=<path>
++        torch.save(model, swm.data.utils.get_cache_dir(sub_folder='checkpoints') / self.run_name / 'model_object.pt')
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git c/stable_worldmodel/envs/__init__.py w/stable_worldmodel/envs/__init__.py
+index dc16170..e6ee4dd 100644
+--- c/stable_worldmodel/envs/__init__.py
++++ w/stable_worldmodel/envs/__init__.py
+@@ -41,6 +41,21 @@ register(
+     entry_point='stable_worldmodel.envs.ogbench.cube_env:CubeEnv',
+ )
+ 
++register(
++    id='swm/PointMaze_Medium-v3',
++    entry_point='stable_worldmodel.envs.gymnasium_robotics.d4rl_point_maze_medium:D4RLPointMazeMediumEnv',
++)
++
++register(
++    id='swm/PointMaze-v0',
++    entry_point='stable_worldmodel.envs.ogbench.pointmaze_env:PointMazeEnv',
++)
++
++register(
++    id='swm/AntMaze-v0',
++    entry_point='stable_worldmodel.envs.ogbench.antmaze_env:AntMazeEnv',
++)
++
+ register(
+     id='swm/OGBScene-v0',
+     entry_point='stable_worldmodel.envs.ogbench.scene_env:SceneEnv',
+diff --git c/stable_worldmodel/policy.py w/stable_worldmodel/policy.py
+index ef94c3d..0307136 100644
+--- c/stable_worldmodel/policy.py
++++ w/stable_worldmodel/policy.py
+@@ -498,24 +498,32 @@ class WorldModelPolicy(BasePolicy):
+ 
+             actions = outputs['actions']
+             keep_horizon = self.cfg.receding_horizon
+-            plan = actions[:, :keep_horizon]
+-            rest = actions[:, keep_horizon:]
++            # Blocks of the plan each env executes before it plans again: keep_horizon, unless the objective asks for
++            # fewer (PAAGoalCost with exec_mode='pass': up to the block where the plan comes closest to its anchor).
++            obj = getattr(getattr(self.solver, 'cost', None), 'objective', None)
++            if getattr(obj, 'exec_mode', 'fixed') == 'pass':
++                n_exec = obj.exec_blocks(self.solver, sliced, actions, keep_horizon)
++            else:
++                n_exec = [keep_horizon] * len(replan_idx)
++            n_rest = actions.shape[1] - keep_horizon
+ 
+-            if self.cfg.warm_start and rest.shape[1] > 0:
++            if self.cfg.warm_start and n_rest > 0:
+                 if self._next_init is None:
+                     self._next_init = torch.zeros(
+-                        n_envs, rest.shape[1], rest.shape[2], dtype=rest.dtype
++                        n_envs, n_rest, actions.shape[2], dtype=actions.dtype
+                     )
+-                self._next_init[idx_tensor] = rest
++                # the part of each plan that follows its executed blocks
++                self._next_init[idx_tensor] = torch.stack(
++                    [actions[r, n : n + n_rest] for r, n in enumerate(n_exec)]
++                )
+             elif not self.cfg.warm_start:
+                 self._next_init = None
+ 
+-            plan = plan.reshape(
+-                len(replan_idx), self.flatten_receding_horizon, -1
+-            )
+-
+             for row, env_i in enumerate(replan_idx):
+-                self._action_buffer[env_i].extend(plan[row])
++                n = n_exec[row]
++                self._action_buffer[env_i].extend(
++                    actions[row, :n].reshape(n * self.cfg.action_block, -1)
++                )
+ 
+         single_shape = self.env.single_action_space.shape
+         is_discrete = 'Discrete' in type(self.env.single_action_space).__name__
+diff --git c/stable_worldmodel/wm/gcrl/__init__.py w/stable_worldmodel/wm/gcrl/__init__.py
+index 03eeb70..d495982 100644
+--- c/stable_worldmodel/wm/gcrl/__init__.py
++++ w/stable_worldmodel/wm/gcrl/__init__.py
+@@ -2,6 +2,7 @@ from .gcrl import GCRL
+ from .module import (
+     Embedder,
+     ExpectileLoss,
++    MetricValuePredictor,
+     Predictor,
+     QPredictor,
+ )
+@@ -10,6 +11,7 @@ __all__ = [
+     'GCRL',
+     'Embedder',
+     'ExpectileLoss',
++    'MetricValuePredictor',
+     'Predictor',
+     'QPredictor',
+ ]
+diff --git c/stable_worldmodel/wm/gcrl/module.py w/stable_worldmodel/wm/gcrl/module.py
+index b6b81f2..c283df3 100644
+--- c/stable_worldmodel/wm/gcrl/module.py
++++ w/stable_worldmodel/wm/gcrl/module.py
+@@ -635,3 +635,24 @@ class ExpectileLoss(nn.Module):
+         weight = torch.abs(self.tau - (weight_source < 0).float())
+         loss = (weight * residual.pow(2)).mean()
+         return loss
++
++
++class MetricValuePredictor(nn.Module):
++    """HILP value V(s, g) = -||phi(s) - phi(g)|| (Park et al., ICML 2024). phi: an MLP on each patch embedding,
++    mean-pooled over the patches of a frame. Transformer kwargs of the shared predictor config are accepted and
++    ignored. Returns (B, T, 1) like the gcrl Predictor value head."""
++
++    def __init__(self, *, num_patches, num_frames, dim, embed_dim=64, mlp_dim=1024, **kwargs):
++        super().__init__()
++        self.num_patches, self.num_frames = num_patches, num_frames
++        self.phi = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, mlp_dim), nn.GELU(), nn.Linear(mlp_dim, mlp_dim),
++                                 nn.GELU(), nn.Linear(mlp_dim, embed_dim))
++
++    def embed(self, x):
++        b, n, _ = x.shape
++        z = self.phi(x).view(b, n // self.num_patches, self.num_patches, -1)
++        return z.mean(2)  # (B, T, embed_dim)
++
++    def forward(self, x, g):
++        zs, zg = self.embed(x), self.embed(g)  # zg: (B, 1, embed_dim)
++        return -(zs - zg).pow(2).sum(-1, keepdim=True).add(1e-6).sqrt()
+diff --git c/stable_worldmodel/world/world.py w/stable_worldmodel/world/world.py
+index cb360d3..a846093 100644
+--- c/stable_worldmodel/world/world.py
++++ w/stable_worldmodel/world/world.py
+@@ -541,6 +541,7 @@ class World:
+             episodes_idx,
+             start_steps,
+             goal_offset,
++            getattr(self, 'cross_goal', None),
+         )
+         episode_cols = set(
+             getattr(dataset, 'episode_column_names', None) or []
+@@ -617,6 +618,8 @@ class World:
+         def on_step(world, mask):
+             world.infos.update(deepcopy(goal_snapshot))
+             results['episode_successes'] |= world.terminateds
++            if getattr(world, 'trace_fn', None) is not None:  # diagnosis: per-step state / latent trace
++                world.trace_fn(world)
+             if frames is not None:
+                 for i in range(world.num_envs):
+                     f = world.infos['pixels'][i]
+@@ -640,7 +643,7 @@ class World:
+         return results
+ 
+ 
+-def _extract_init_goal(dataset, episodes_idx, start_steps, goal_offset):
++def _extract_init_goal(dataset, episodes_idx, start_steps, goal_offset, cross_goal=None):
+     """Build per-episode init/goal rows for a dataset-driven evaluation.
+ 
+     Returns ``(init_rows, goal_rows, dataset_videos)``:
+@@ -688,6 +691,21 @@ def _extract_init_goal(dataset, episodes_idx, start_steps, goal_offset):
+         init_rows.append(init_row)
+         goal_rows.append(goal_row)
+ 
++    if cross_goal is not None:  # goals from other episodes (stitching test): goal_rows from (goal_eps, goal_steps)
++        g_ep, g_st = np.asarray(cross_goal[0]), np.asarray(cross_goal[1])
++        gdata = dataset.load_chunk(g_ep, g_st, g_st + 1)
++        for i, ep in enumerate(gdata):
++            for col in dataset.column_names:
++                if col.startswith('goal'):
++                    continue
++                val = ep[col]
++                if not isinstance(val, (torch.Tensor, np.ndarray)):
++                    continue
++                if col.startswith('pixels'):
++                    val = val.permute(0, 2, 3, 1)
++                arr = val.numpy() if isinstance(val, torch.Tensor) else val
++                goal_rows[i]['goal' if col == 'pixels' else f'goal_{col}'] = arr[-1]
++
+     return init_rows, goal_rows, dataset_videos
+ 
+ 

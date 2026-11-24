@@ -1,0 +1,1418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Graph Anchors — Long-Horizon Planning with Latent World Models</title>
+  <meta name="description" content="Training-free long-horizon visual planning for frozen latent world models via sparse frame graphs, cross-episode switch penalties, and closest-approach MPC.">
+  <meta property="og:title" content="Long-Horizon Planning with Latent World Models via Graph Anchors">
+  <meta property="og:description" content="Diagnosing range and focus failures in visual goal costs, and solving distant goals up to 400 steps away without retraining.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://syed-nazmus-sakib.github.io/graph-anchors/">
+  <meta property="og:image" content="https://syed-nazmus-sakib.github.io/graph-anchors/assets/figs/fig1_column.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <!-- =====================================================================
+       Compact Sticky Navigation Bar (auto-hides on scroll down)
+       ===================================================================== -->
+  <header class="top-bar">
+    <div class="container top-bar-inner">
+      <a class="brand" href="#top" aria-label="Graph Anchors Home">
+        <svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+          <circle cx="6" cy="21" r="3.2" stroke="currentColor" stroke-width="2" />
+          <path d="M8.8 19.2L13.5 14.5M16.5 11.5L20.5 7.5" stroke="#0a66c2" stroke-width="2" stroke-linecap="round" />
+          <polygon points="15,9.6 18.4,13 15,16.4 11.6,13" fill="#ea580c" />
+          <circle cx="22.4" cy="5.6" r="3.2" fill="#0a66c2" />
+        </svg>
+        <span>Graph Anchors</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Page sections">
+        <a href="#abstract">Abstract</a>
+        <a href="#diagnosis">Diagnosis</a>
+        <a href="#method">Method</a>
+        <a href="#videos">Videos</a>
+        <a href="#results">Results</a>
+        <a href="#citation">BibTeX</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a class="icon-btn" href="https://github.com/syed-nazmus-sakib/graph-anchors" target="_blank" rel="noopener noreferrer" aria-label="GitHub Repository" title="GitHub Repository">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.05 1.53 1.05.9 1.57 2.35 1.12 2.92.86.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.08 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.38 9.38 0 0 1 12 6.84c.85 0 1.71.12 2.51.35 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.64 1.03 2.76 0 3.95-2.34 4.82-4.57 5.07.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"/></svg>
+        </a>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light or dark theme" title="Toggle theme">
+          <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>
+          <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <!-- ===================================================================
+         Hero Section (Above the Fold)
+         =================================================================== -->
+    <section id="top" class="hero">
+      <div class="container">
+        <div class="hero-header">
+          <div class="eyebrow">
+            <span class="eyebrow-dot" aria-hidden="true"></span>
+            <span>Preprint &middot; 2026 &middot; Training-Free Latent World-Model Planning</span>
+          </div>
+
+          <h1 class="hero-title">
+            Long-Horizon Planning with Latent World Models via <span class="accent-word">Graph Anchors</span>
+          </h1>
+
+          <div class="authors" aria-label="Authors">
+            <span>Syed Nazmus Sakib<sup>1</sup></span>
+            <span>Abdul Monaf Chowdhury<sup>1</sup></span>
+            <span>Peizhen Li<sup>3</sup></span>
+            <span>Nafiul Haque<sup>1</sup></span>
+            <span>Chandak Chakma<sup>1</sup></span>
+            <span>Md Mehedi Hasan<sup>1</sup></span>
+            <span>Zehong Cao<sup>3</sup></span>
+            <span>Shifat E. Arman<sup>1,2,*</sup></span>
+          </div>
+
+          <div class="affiliations" aria-label="Affiliations">
+            <span><sup>1</sup>Department of Robotics and Mechatronics Engineering, University of Dhaka</span>
+            <span><sup>2</sup>Department of Engineering Science, University of Oxford</span>
+            <span><sup>3</sup>School of CSIT, Adelaide University</span>
+          </div>
+
+          <div class="cta-row">
+            <a class="btn btn-primary" href="assets/paper.pdf" target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <span>Paper (PDF)</span>
+            </a>
+            <a class="btn" href="https://github.com/syed-nazmus-sakib/graph-anchors" target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.05 1.53 1.05.9 1.57 2.35 1.12 2.92.86.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.08 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.38 9.38 0 0 1 12 6.84c.85 0 1.71.12 2.51.35 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.64 1.03 2.76 0 3.95-2.34 4.82-4.57 5.07.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"/></svg>
+              <span>Code</span>
+            </a>
+            <a class="btn" href="#videos">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Rollout Videos (29)</span>
+            </a>
+            <a class="btn" href="#citation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+              <span>BibTeX</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Headline Metric Strip -->
+        <div class="kpi-strip" aria-label="Headline benchmark improvements">
+          <div class="kpi-card">
+            <span class="kpi-label">PointMaze-Medium (d = 200)</span>
+            <div class="kpi-value">
+              <span>13%</span>
+              <span class="kpi-arrow">&rarr;</span>
+              <span class="kpi-highlight">85%</span>
+              <span class="kpi-delta">+72 pts</span>
+            </div>
+            <span class="kpi-sub">Contact setting reaches <strong>94%</strong>; 95% stitched</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">PointMaze-Large (d = 400)</span>
+            <div class="kpi-value">
+              <span>8%</span>
+              <span class="kpi-arrow">&rarr;</span>
+              <span class="kpi-highlight">87%</span>
+              <span class="kpi-delta">+79 pts</span>
+            </div>
+            <span class="kpi-sub">Exact same frozen LeWM; 66% stitched</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">Push-T Contact (d = 150)</span>
+            <div class="kpi-value">
+              <span>5%</span>
+              <span class="kpi-arrow">&rarr;</span>
+              <span class="kpi-highlight-anchor">71%</span>
+              <span class="kpi-delta">+66 pts</span>
+            </div>
+            <span class="kpi-sub">Switch cost &lambda; = 3 keeps pushes unbroken</span>
+          </div>
+
+          <div class="kpi-card">
+            <span class="kpi-label">Sparse Graph Efficiency</span>
+            <div class="kpi-value">
+              <span class="kpi-highlight">26.8&times;</span>
+              <span class="kpi-delta">40&times; nodes</span>
+            </div>
+            <span class="kpi-sub">199k nodes in 72.9 MB; 64.6 ms/step vs. NGC</span>
+          </div>
+        </div>
+
+        <!-- Teaser Card (LCP Image with high fetchpriority) -->
+        <div class="teaser-card">
+          <div class="teaser-grid">
+            <div class="teaser-media">
+              <button
+                type="button"
+                class="figure-trigger"
+                style="padding:0"
+                data-full="assets/figs/fig1_column.png"
+                data-alt="Side-by-side PointMaze-Medium trajectory comparison between LeWM and Graph Anchors"
+                data-title="Figure 1: Near Targets on a Recorded Route Guide the Exact Same Frozen Planner"
+                data-caption="(a) LeWM aims every plan straight at a goal 200 steps away and loses its way in the maze. (b) Graph Anchors aim each plan at a nearby node (orange) along the shortest route through the recorded data (light blue), and the exact same frozen planner reaches the goal."
+              >
+                <span class="zoom-hint">Click to zoom</span>
+                <picture>
+                  <source srcset="assets/figs/fig1_column.webp" type="image/webp">
+                  <img
+                    src="assets/figs/fig1_column.png"
+                    alt="Figure 1 comparing direct goal planning in LeWM against Graph Anchors on PointMaze-Medium"
+                    width="715"
+                    height="468"
+                    fetchpriority="high"
+                    loading="eager"
+                  >
+                </picture>
+              </button>
+            </div>
+            <div class="teaser-copy">
+              <span class="teaser-kicker">Core Idea</span>
+              <h2>A distant goal misleads the planner; a nearby recorded anchor guides it.</h2>
+              <p>
+                Frozen visual world models already solve short-range tasks reliably. They collapse over long horizons not because imagination fails, but because whole-image latent distance loses directional signal beyond a few moves and prioritizes robot arms over manipulated objects.
+              </p>
+              <ul class="teaser-points">
+                <li>
+                  <span class="dot-blue" aria-hidden="true"></span>
+                  <span><strong>Zero retraining:</strong> Build one sparse graph over the world model's own training frames.</span>
+                </li>
+                <li>
+                  <span class="dot-orange" aria-hidden="true"></span>
+                  <span><strong>Near, continuous targets:</strong> Aim the unchanged CEM planner at an orange anchor node a few moves ahead along the shortest path, penalizing episode switches (&lambda; = 3) when contact matters.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 1: Abstract
+         =================================================================== -->
+    <section id="abstract" class="section">
+      <div class="container-narrow">
+        <div class="section-head">
+          <span class="section-tag">Overview</span>
+          <h2 class="section-title">Abstract</h2>
+        </div>
+
+        <p class="abstract-text">
+          Latent world models plan in a compact latent space by predicting the outcomes of actions. Their planners judge a plan by the latent distance between its predicted end state and the goal image. We show that this distance fails in two distinct ways. First, it loses directional signal a few steps from the goal, causing distant goals to fail. Second, it weighs the robot arm over the manipulated object, causing manipulation to fail at contact. We measure both failures directly on recorded data by asking whether a lower latent distance corresponds to true progress toward the goal. Across five environments, six visual representations (including raw pixels and V-JEPA 2), and nine Meta-World tasks, this ranking test cleanly separates the two failures, and the graph distance to a goal predicts where closed-loop planning breaks down. Both failures share a single remedy: replacing the distant goal with a nearby target that lies on a recorded trajectory. We realize this principle with <em>Graph Anchors</em>, a training-free planner for frozen latent world models. It builds a sparse graph once over the model's own training frames and aims each planning step at a node a few moves ahead along the shortest path to the goal, keeping paths on recorded transitions wherever contact matters. On goals up to 400 steps away, Graph Anchors raise LeWM's success from 13% to 85% on PointMaze-Medium, from 8% to 87% on PointMaze-Large, and from 5% to 71% on Push-T, where stronger search toward the goal fails and where prior training-free planners break down under missing step horizons, subsampling shortcuts, or fragmented contact.
+        </p>
+
+        <div class="callout">
+          <strong>Key Takeaway:</strong> Before running any closed-loop rollout, offline goal graph distance correlates with LeWM's collapse (Spearman &rho; = &minus;0.90) and predicts where Graph Anchors deliver large gains (+0.82) versus where short-range planning already suffices (Reacher).
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 2: Diagnosis (Range vs. Focus + 2 Live Diagnostic Videos)
+         =================================================================== -->
+    <section id="diagnosis" class="section section-alt section-deferred">
+      <div class="container">
+        <div class="section-head">
+          <span class="section-tag">Offline Diagnosis</span>
+          <h2 class="section-title">Two Root Failures of Visual Goal Costs</h2>
+          <p class="section-lead">
+            Rather than guessing why long-horizon rollouts fail, we test the latent goal cost directly on recorded frames before running any planner.
+          </p>
+        </div>
+
+        <div class="two-col">
+          <article class="diag-card">
+            <span class="diag-badge diag-badge-range">Failure 1 &middot; Range</span>
+            <h3>Directional signal vanishes within six graph hops</h3>
+            <p>
+              We measure &rho;(h), the probability that a neighbor closer to the goal on a reference route also has a lower latent distance. Across navigation tasks, &rho;(h) begins near 0.91&ndash;1.00 right next to the goal and drops to near-chance (0.50&ndash;0.59) within six hops. Testing six visual representations on identical frames (raw pixels, DINOv2-S, CLIP, SigLIP, video-trained V-JEPA 2, and LeWM) reveals the exact same decay curve, showing short range is inherent to comparing two whole images across corridors and walls.
+            </p>
+          </article>
+
+          <article class="diag-card">
+            <span class="diag-badge diag-badge-focus">Failure 2 &middot; Focus</span>
+            <h3>Whole-image distance weighs the arm over the object</h3>
+            <p>
+              Across all nine Meta-World object tasks we test, shifting only the robot hand by 5 cm costs 2.6&times; to 14&times; more in whole-image latent distance than leaving only the manipulated object off target, solving 0 of 72 episodes under exact dynamics. Keeping the released goal cost untouched and simply aiming at a recorded demonstration frame 20 steps ahead solves 65 of 72 episodes immediately.
+            </p>
+          </article>
+        </div>
+
+        <!-- Two Live Diagnosis Videos -->
+        <div class="video-grid" style="margin-block-end: 1.75rem;">
+          <figure class="video-card">
+            <div class="video-frame">
+              <video
+                controls
+                muted
+                playsinline
+                preload="none"
+                width="1280"
+                height="720"
+                poster="assets/posters/diagnosis_pointmaze.webp"
+              >
+                <source src="assets/videos/diagnosis_pointmaze.mp4" type="video/mp4">
+              </video>
+            </div>
+            <figcaption class="video-meta">
+              <div class="video-meta-head">
+                <span class="outcome-badge badge-info">Diagnosis &middot; Closed-Loop Trace</span>
+                <span class="duration-tag">15.3 s &middot; 2&times; speed</span>
+              </div>
+              <h3 class="video-title">Why distant goals stall: true route distance vs. latent distance</h3>
+              <p class="video-desc">
+                PointMaze-Medium (d = 200, episode 10). Top: camera views with paths for LeWM (left, fails in 400 steps) and Graph Anchors (right, succeeds at step 137). Bottom: true route distance (solid) drops steadily under Graph Anchors, while LeWM's latent distance (dashed) stays flat near its start value until the very last steps.
+              </p>
+            </figcaption>
+          </figure>
+
+          <figure class="video-card">
+            <div class="video-frame">
+              <video
+                controls
+                muted
+                playsinline
+                preload="none"
+                width="1280"
+                height="720"
+                poster="assets/posters/latent3d_pointmaze.webp"
+              >
+                <source src="assets/videos/latent3d_pointmaze.mp4" type="video/mp4">
+              </video>
+            </div>
+            <figcaption class="video-meta">
+              <div class="video-meta-head">
+                <span class="outcome-badge badge-info">Diagnosis &middot; 3D Latent Geometry</span>
+                <span class="duration-tag">12.0 s &middot; rotating view</span>
+              </div>
+              <h3 class="video-title">20k recorded PointMaze frames in LeWM's top-3 PCA space</h3>
+              <p class="video-desc">
+                Points are colored by true route distance to the episode goal, with both planner trajectories overlaid. Frames far away behind maze walls sit directly adjacent to frames near the goal, so straight Euclidean latent distance cannot separate progress from dead ends.
+              </p>
+            </figcaption>
+          </figure>
+        </div>
+
+        <!-- Clickable Diagnosis Figures -->
+        <div class="two-col" style="margin-block-end: 0;">
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/fig_diag.png"
+              data-alt="Offline diagnosis of range and focus failures across environments and encoders"
+              data-title="Figure 2: Offline Goal-Cost Diagnosis (Range and Focus)"
+              data-caption="(a) Ranking accuracy rho(h) collapses within 6 hops across navigation benchmarks. (b) LeWM, PLDM, and frozen DINOv2 all fall below 0.55 within 6-9 hops. (c) On Meta-World, arm movement dominates whole-image latent distance across all nine object tasks."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/fig_diag.webp" type="image/webp">
+                <img src="assets/figs/fig_diag.png" alt="Range collapse across environments and Meta-World arm-vs-object focus failure" width="715" height="745" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Range &amp; focus diagnosis.</strong> Local ranking &rho;(h) collapses within 6&ndash;9 hops across environments and encoders, while Meta-World whole-image distance prioritizes arm pose over the manipulated object.
+            </figcaption>
+          </figure>
+
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/fig_e1_range.png"
+              data-alt="Range failure curves across six visual representations including raw pixels and V-JEPA 2"
+              data-title="Figure A1: Universal Range Collapse Across Six Visual Representations"
+              data-caption="Ranking accuracy rho(h) on identical PointMaze-Medium and Two-Room frames across raw pixels (32x32 pooled), frozen DINOv2-S, CLIP ViT-B/16, SigLIP-B/16, video-trained V-JEPA 2 ViT-L, and LeWM. Even raw pixels match V-JEPA 2's decay rate."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/fig_e1_range.webp" type="image/webp">
+                <img src="assets/figs/fig_e1_range.png" alt="Ranking accuracy across raw pixels, DINOv2, CLIP, SigLIP, V-JEPA 2, and LeWM" width="715" height="399" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Universal across six visual representations.</strong> Raw pixels, DINOv2, CLIP, SigLIP, V-JEPA 2, and LeWM all lose directional signal at virtually the same hop distance across corridors and walls.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 3: Method (Graph Anchors)
+         =================================================================== -->
+    <section id="method" class="section section-deferred">
+      <div class="container">
+        <div class="section-head">
+          <span class="section-tag">Training-Free Planner</span>
+          <h2 class="section-title">How Graph Anchors Work</h2>
+          <p class="section-lead">
+            Keep the frozen world model and its CEM search untouched. Replace only the distant goal with a nearby recorded anchor node along the shortest route through training frames.
+          </p>
+        </div>
+
+        <figure class="figure-card">
+          <button
+            type="button"
+            class="figure-trigger"
+            data-full="assets/figs/fig2_method.png"
+            data-alt="Graph Anchors pipeline diagram: sparse frame graph, Dijkstra shortest path with switch cost, and pass-through CEM"
+            data-title="Figure 3: Graph Anchors Architecture"
+            data-caption="Build a sparse directed graph over the 5-step training frame grid once with a fixed 1-block neighbor threshold tau. At test time, cached Dijkstra finds the shortest path to the goal and hands the frozen CEM planner an anchor K moves ahead, penalizing cross-episode jumps by lambda when contact matters."
+          >
+            <span class="zoom-hint">Click to zoom</span>
+            <picture>
+              <source srcset="assets/figs/fig2_method.webp" type="image/webp">
+              <img src="assets/figs/fig2_method.png" alt="Diagram of the Graph Anchors three-step planning pipeline" width="1513" height="667" loading="lazy">
+            </picture>
+          </button>
+          <figcaption class="figure-caption">
+            <strong>Three training-free steps over a frozen world model.</strong> Building the 199k-node PointMaze-Medium graph takes 51 s once offline; each cached Dijkstra query runs in 84&ndash;93 ms on CPU with 64.6 ms GPU planning overhead per decision.
+          </figcaption>
+        </figure>
+
+        <div class="steps-grid">
+          <article class="step-card">
+            <div class="step-num">01 &middot; SPARSE GRAPH</div>
+            <h3>Full-dataset 1-block frame graph</h3>
+            <p>
+              Encode every 5th frame of the world model's own training data once. Add directed temporal edges (weight 1) along each episode and cross-episode <em>k</em>-NN bridges only within the fixed 1-block distance threshold &tau;, indexing 199k nodes in 72.9 MB with <strong>0.00% sparse-data shortcuts</strong>.
+            </p>
+          </article>
+
+          <article class="step-card">
+            <div class="step-num">02 &middot; SHORTEST-PATH ANCHOR</div>
+            <h3>Span <em>K</em> &amp; contact switch cost &lambda;</h3>
+            <p>
+              Attach the current observation and goal image, run cached Dijkstra, and select the node <em>K</em> moves ahead. Navigation uses <em>K</em> = 6, &lambda; = 1. Where object contact matters, the contact setting (<em>K</em> = 2, &lambda; = 3) penalizes episode switches, cutting Push-T switches <strong>4.2&times;</strong> and keeping continuous pushes intact.
+            </p>
+          </article>
+
+          <article class="step-card">
+            <div class="step-num">03 &middot; PASS-THROUGH MPC</div>
+            <h3>Closest-approach CEM execution</h3>
+            <p>
+              Score each imagined CEM rollout by its minimum latent distance to the active anchor along the horizon rather than only its final step, and execute up to that closest approach so the agent passes smoothly through anchors without stalling.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 4: Interactive Video Explorer (All 29 Videos!)
+         =================================================================== -->
+    <section id="videos" class="section section-alt section-deferred">
+      <div class="container">
+        <div class="section-head">
+          <span class="section-tag">Qualitative Rollouts &middot; 29 Videos</span>
+          <h2 class="section-title">Interactive Video Gallery</h2>
+          <p class="section-lead">
+            Unaltered environment camera rollouts recorded from evaluation logs (15 fps synchronized, identical starts &amp; goals). Episodes are chosen by fixed selection rules, including transparent failure cases and Reacher control runs.
+          </p>
+        </div>
+
+        <!-- Tab Navigation Bar -->
+        <div class="tab-bar" role="tablist" aria-label="Video collections">
+          <button id="vtab-overlay" class="tab-btn" role="tab" aria-selected="true" aria-controls="vpanel-overlay" tabindex="0" type="button">
+            <span>Anchor Overlay</span>
+            <span class="tab-count">3</span>
+          </button>
+          <button id="vtab-compare" class="tab-btn" role="tab" aria-selected="false" aria-controls="vpanel-compare" tabindex="-1" type="button">
+            <span>4-Way Push-T d=200</span>
+            <span class="tab-count">1</span>
+          </button>
+          <button id="vtab-pusht" class="tab-btn" role="tab" aria-selected="false" aria-controls="vpanel-pusht" tabindex="-1" type="button">
+            <span>Push-T (d=150)</span>
+            <span class="tab-count">5</span>
+          </button>
+          <button id="vtab-tworoom" class="tab-btn" role="tab" aria-selected="false" aria-controls="vpanel-tworoom" tabindex="-1" type="button">
+            <span>Two-Room (d=75)</span>
+            <span class="tab-count">6</span>
+          </button>
+          <button id="vtab-pmm" class="tab-btn" role="tab" aria-selected="false" aria-controls="vpanel-pmm" tabindex="-1" type="button">
+            <span>PointMaze-M (d=200)</span>
+            <span class="tab-count">6</span>
+          </button>
+          <button id="vtab-reacher" class="tab-btn" role="tab" aria-selected="false" aria-controls="vpanel-reacher" tabindex="-1" type="button">
+            <span>Reacher (Control)</span>
+            <span class="tab-count">6</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: Planner Camera View (Active Anchor Overlay — 3 Videos) -->
+        <div id="vpanel-overlay" class="tab-panel" role="tabpanel" aria-labelledby="vtab-overlay">
+          <div class="panel-banner">
+            <p>
+              <strong>What the planner aims at in real time:</strong> Overlaid from logged evaluation traces showing the path so far, the goal (star, or green T on Push-T), and the active anchor (diamond on mazes; blue block pose outline on Push-T).
+            </p>
+          </div>
+          <div class="video-grid-3">
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="926" height="582" poster="assets/posters/planner_view_pointmaze.webp">
+                  <source src="assets/videos/planner_view_pointmaze.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-info">PointMaze-Medium &middot; d = 200</span>
+                  <span class="duration-tag">86 s</span>
+                </div>
+                <h3 class="video-title">Episodes 1, 2, 3 with live anchor diamond</h3>
+                <p class="video-desc">In all three episodes, Graph Anchors navigate around maze corridors to the goal while direct LeWM stalls. The orange anchor steps smoothly ahead every 25 steps.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="926" height="582" poster="assets/posters/planner_view_tworoom.webp">
+                  <source src="assets/videos/planner_view_tworoom.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-info">Two-Room &middot; d = 75</span>
+                  <span class="duration-tag">36 s</span>
+                </div>
+                <h3 class="video-title">Episodes 4, 18, 7 with live doorway anchor</h3>
+                <p class="video-desc">LeWM gets trapped against the dividing wall while Graph Anchors place intermediate targets cleanly through the doorway and straight to the goal star.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="926" height="608" poster="assets/posters/planner_view_pusht.webp">
+                  <source src="assets/videos/planner_view_pusht.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-info">Push-T Contact &middot; d = 150</span>
+                  <span class="duration-tag">66 s</span>
+                </div>
+                <h3 class="video-title">Episodes 2, 21, 33 with blue anchor block outline</h3>
+                <p class="video-desc">Contact setting (K = 2, &lambda; = 3; trace run 29/50 vs. LeWM 1/50). The blue outline tracks the active recorded T-block pose step by step until handoff to the green goal.</p>
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+
+        <!-- TAB 2: 4-Way Planner Comparison (Push-T d=200 — 1 Featured Video) -->
+        <div id="vpanel-compare" class="tab-panel" role="tabpanel" aria-labelledby="vtab-compare" hidden>
+          <div class="panel-banner">
+            <p>
+              <strong>Four training-free planners on identical Push-T d = 200 pairs (budget 400):</strong> Graph Anchors (contact), AP (given oracle step count d), Metro-WM-style (best Push-T setting h:H = 3:20), and NGC, all using the exact same frozen LeWM and graph nodes.
+            </p>
+            <div class="scoreboard" aria-label="Push-T d=200 mean success rates">
+              <span class="score-pill ours">Graph Anchors: 71%</span>
+              <span class="score-pill">AP (true d): 56%</span>
+              <span class="score-pill">Metro-WM: 27%</span>
+              <span class="score-pill">NGC: 4%</span>
+            </div>
+          </div>
+
+          <figure class="video-card video-card-featured">
+            <div class="video-frame">
+              <video controls muted playsinline preload="none" width="1280" height="720" poster="assets/posters/compare_pusht_d200.webp">
+                <source src="assets/videos/compare_pusht_d200.mp4" type="video/mp4">
+              </video>
+            </div>
+            <figcaption class="video-meta">
+              <div class="video-meta-head">
+                <span class="outcome-badge badge-win">4-Way Comparison &middot; Seed 0 (39 vs. 31 vs. 12 vs. 2 / 50)</span>
+                <span class="duration-tag">61 s &middot; 2&times; speed</span>
+              </div>
+              <h3 class="video-title">Push-T d = 200: Episodes 5, 17 (Ours only), Episode 0 (Ours + AP), Episode 25 (AP only)</h3>
+              <p class="video-desc">
+                Selected by fixed rule: first two pairs only Graph Anchors solve (episodes 5 and 17), first pair both Graph Anchors and AP solve (episode 0), and first pair AP solves while Graph Anchors fail (episode 25). NGC teleports block poses and Metro-WM fragments pushes across episode switches.
+              </p>
+            </figcaption>
+          </figure>
+        </div>
+
+        <!-- TAB 3: Push-T (d=150 — 4 Episodes + Full Reel) -->
+        <div id="vpanel-pusht" class="tab-panel" role="tabpanel" aria-labelledby="vtab-pusht" hidden>
+          <div class="panel-banner">
+            <p>
+              <strong>Push-T (d = 150, budget 300, seed 0):</strong> Contact setting (K = 2, &lambda; = 3, H = 2, pass-through execution). LeWM solves <strong>1/50</strong>; Graph Anchors solve <strong>35/50</strong>. Episode 38 is the lone pair solved by LeWM (shown as our failure case).
+            </p>
+            <div class="scoreboard">
+              <span class="score-pill">LeWM: 1/50</span>
+              <span class="score-pill ours">Graph Anchors: 35/50</span>
+            </div>
+          </div>
+
+          <div class="video-grid">
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pusht_ep24.webp">
+                  <source src="assets/videos/pusht_ep24.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Push-T Episode 24</h3>
+                <p class="video-desc">LeWM fails to reach the goal in 300 steps; Graph Anchors guide the T-block cleanly into target alignment at step 277.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pusht_ep44.webp">
+                  <source src="assets/videos/pusht_ep44.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Push-T Episode 44</h3>
+                <p class="video-desc">LeWM fails in 300 steps; Graph Anchors maintain continuous pushing contact and succeed at step 254.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pusht_ep33.webp">
+                  <source src="assets/videos/pusht_ep33.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Push-T Episode 33</h3>
+                <p class="video-desc">LeWM stalls away from the block; Graph Anchors follow recorded pushing anchors and succeed at step 236.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pusht_ep38.webp">
+                  <source src="assets/videos/pusht_ep38.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-fail">Failure Case &middot; LeWM Succeeds</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Push-T Episode 38</h3>
+                <p class="video-desc">Transparent failure case: LeWM succeeds quickly at step 75 while Graph Anchors miss within 300 steps.</p>
+              </figcaption>
+            </figure>
+          </div>
+
+          <details class="reel-details">
+            <summary>Watch all 4 Push-T clips as one continuous reel (93 s)</summary>
+            <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pusht_all.webp">
+              <source src="assets/videos/pusht_all.mp4" type="video/mp4">
+            </video>
+          </details>
+        </div>
+
+        <!-- TAB 4: Two-Room (d=75 — 5 Episodes + Full Reel) -->
+        <div id="vpanel-tworoom" class="tab-panel" role="tabpanel" aria-labelledby="vtab-tworoom" hidden>
+          <div class="panel-banner">
+            <p>
+              <strong>Two-Room (d = 75, budget 150, seed 0):</strong> Navigation setting (K = 6, &lambda; = 1). LeWM solves <strong>14/50</strong>; Graph Anchors solve <strong>47/50</strong> (and 100% in the contact setting across 3 seeds).
+            </p>
+            <div class="scoreboard">
+              <span class="score-pill">LeWM: 14/50</span>
+              <span class="score-pill ours">Graph Anchors: 47/50</span>
+            </div>
+          </div>
+
+          <div class="video-grid">
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_ep04.webp">
+                  <source src="assets/videos/tworoom_ep04.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">12 s</span>
+                </div>
+                <h3 class="video-title">Two-Room Episode 4</h3>
+                <p class="video-desc">LeWM stalls against the center wall (fails in 150 steps); Graph Anchors route through the doorway and succeed at step 145.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_ep18.webp">
+                  <source src="assets/videos/tworoom_ep18.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">12 s</span>
+                </div>
+                <h3 class="video-title">Two-Room Episode 18</h3>
+                <p class="video-desc">LeWM fails in 150 steps; Graph Anchors cross rooms cleanly and reach the goal at step 127.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_ep07.webp">
+                  <source src="assets/videos/tworoom_ep07.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">12 s</span>
+                </div>
+                <h3 class="video-title">Two-Room Episode 7</h3>
+                <p class="video-desc">LeWM fails in 150 steps; Graph Anchors pass the doorway and succeed at step 118.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_ep12.webp">
+                  <source src="assets/videos/tworoom_ep12.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-both">Both Succeed &middot; 3.7&times; Faster</span>
+                  <span class="duration-tag">9 s</span>
+                </div>
+                <h3 class="video-title">Two-Room Episode 12</h3>
+                <p class="video-desc">Both planners solve the pair: LeWM needs 100 steps while Graph Anchors finish directly in 27 steps.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_ep01.webp">
+                  <source src="assets/videos/tworoom_ep01.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-fail">Failure Case &middot; Both Fail</span>
+                  <span class="duration-tag">12 s</span>
+                </div>
+                <h3 class="video-title">Two-Room Episode 1</h3>
+                <p class="video-desc">Neither planner reaches the goal within the 150-step budget.</p>
+              </figcaption>
+            </figure>
+          </div>
+
+          <details class="reel-details">
+            <summary>Watch all 5 Two-Room clips as one continuous reel (62 s)</summary>
+            <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/tworoom_all.webp">
+              <source src="assets/videos/tworoom_all.mp4" type="video/mp4">
+            </video>
+          </details>
+        </div>
+
+        <!-- TAB 5: PointMaze-Medium (d=200 — 5 Episodes + Full Reel) -->
+        <div id="vpanel-pmm" class="tab-panel" role="tabpanel" aria-labelledby="vtab-pmm" hidden>
+          <div class="panel-banner">
+            <p>
+              <strong>PointMaze-Medium (d = 200, budget 400, seed 0):</strong> Navigation setting (K = 6, &lambda; = 1). LeWM solves <strong>8/50</strong>; Graph Anchors solve <strong>46/50</strong>. Videos were recorded on the first 12 pairs (LeWM 1/12, Graph Anchors 10/12).
+            </p>
+            <div class="scoreboard">
+              <span class="score-pill">LeWM: 8/50</span>
+              <span class="score-pill ours">Graph Anchors: 46/50</span>
+            </div>
+          </div>
+
+          <div class="video-grid">
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_ep08.webp">
+                  <source src="assets/videos/pointmaze_ep08.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">29 s</span>
+                </div>
+                <h3 class="video-title">PointMaze-Medium Episode 8</h3>
+                <p class="video-desc">LeWM wanders without directional signal (fails in 400 steps); Graph Anchors traverse the full maze and succeed at step 389.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_ep07.webp">
+                  <source src="assets/videos/pointmaze_ep07.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">29 s</span>
+                </div>
+                <h3 class="video-title">PointMaze-Medium Episode 7</h3>
+                <p class="video-desc">LeWM fails in 400 steps; Graph Anchors follow anchor nodes cleanly around multiple corners to succeed at step 329.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_ep03.webp">
+                  <source src="assets/videos/pointmaze_ep03.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">29 s</span>
+                </div>
+                <h3 class="video-title">PointMaze-Medium Episode 3</h3>
+                <p class="video-desc">LeWM stalls in a wrong corridor; Graph Anchors reach the goal at step 235.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_ep00.webp">
+                  <source src="assets/videos/pointmaze_ep00.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-both">Both Succeed &middot; 3.4&times; Faster</span>
+                  <span class="duration-tag">27 s</span>
+                </div>
+                <h3 class="video-title">PointMaze-Medium Episode 0</h3>
+                <p class="video-desc">LeWM eventually finds the goal at step 372, whereas Graph Anchors solve the exact same route in 108 steps.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_ep05.webp">
+                  <source src="assets/videos/pointmaze_ep05.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-fail">Failure Case &middot; Both Fail</span>
+                  <span class="duration-tag">29 s</span>
+                </div>
+                <h3 class="video-title">PointMaze-Medium Episode 5</h3>
+                <p class="video-desc">Neither LeWM nor Graph Anchors reach the goal within 400 steps.</p>
+              </figcaption>
+            </figure>
+          </div>
+
+          <details class="reel-details">
+            <summary>Watch all 5 PointMaze-Medium clips as one continuous reel (146 s)</summary>
+            <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/pointmaze_all.webp">
+              <source src="assets/videos/pointmaze_all.mp4" type="video/mp4">
+            </video>
+          </details>
+        </div>
+
+        <!-- TAB 6: Reacher (d=150 — Control Case: 5 Episodes + Full Reel) -->
+        <div id="vpanel-reacher" class="tab-panel" role="tabpanel" aria-labelledby="vtab-reacher" hidden>
+          <div class="panel-banner">
+            <p>
+              <strong>Reacher (d = 150, budget 300, seed 0, Negative Control):</strong> Goals stay within 10 graph hops at every distance, so LeWM (<strong>33/50</strong>) and Graph Anchors (<strong>32/50</strong>) solve roughly two-thirds equally. Shown as predicted by our diagnosis, not as an improvement.
+            </p>
+            <div class="scoreboard">
+              <span class="score-pill">LeWM: 33/50</span>
+              <span class="score-pill">Graph Anchors: 32/50</span>
+            </div>
+          </div>
+
+          <div class="video-grid">
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_ep19.webp">
+                  <source src="assets/videos/reacher_ep19.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Reacher Episode 19</h3>
+                <p class="video-desc">LeWM misses in 300 steps; Graph Anchors reach the target at step 239.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_ep43.webp">
+                  <source src="assets/videos/reacher_ep43.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Reacher Episode 43</h3>
+                <p class="video-desc">LeWM misses in 300 steps; Graph Anchors succeed at step 228.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_ep11.webp">
+                  <source src="assets/videos/reacher_ep11.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-win">Graph Anchors Succeed &middot; LeWM Fails</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Reacher Episode 11</h3>
+                <p class="video-desc">LeWM misses in 300 steps; Graph Anchors succeed at step 131.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_ep36.webp">
+                  <source src="assets/videos/reacher_ep36.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-both">Both Succeed</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Reacher Episode 36</h3>
+                <p class="video-desc">LeWM succeeds at step 240; Graph Anchors succeed at step 298.</p>
+              </figcaption>
+            </figure>
+
+            <figure class="video-card">
+              <div class="video-frame">
+                <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_ep09.webp">
+                  <source src="assets/videos/reacher_ep09.mp4" type="video/mp4">
+                </video>
+              </div>
+              <figcaption class="video-meta">
+                <div class="video-meta-head">
+                  <span class="outcome-badge badge-fail">LeWM Succeeds &middot; Graph Anchors Fail</span>
+                  <span class="duration-tag">22 s</span>
+                </div>
+                <h3 class="video-title">Reacher Episode 9</h3>
+                <p class="video-desc">LeWM solves this nearby target directly in 26 steps while intermediate anchors add an unnecessary detour.</p>
+              </figcaption>
+            </figure>
+          </div>
+
+          <details class="reel-details">
+            <summary>Watch all 5 Reacher clips as one continuous reel (115 s)</summary>
+            <video controls muted playsinline preload="none" width="1204" height="586" poster="assets/posters/reacher_all.webp">
+              <source src="assets/videos/reacher_all.mp4" type="video/mp4">
+            </video>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 5: Quantitative Results & Structural Comparison
+         =================================================================== -->
+    <section id="results" class="section section-deferred">
+      <div class="container">
+        <div class="section-head">
+          <span class="section-tag">Quantitative Benchmarks</span>
+          <h2 class="section-title">Results &amp; Head-to-Head Planner Comparison</h2>
+          <p class="section-lead">
+            Evaluated across five environments, offline GCRL baselines, world models, and training-free planners (AP, NGC, Metro-WM) on identical frozen checkpoints, pairs, and 2d budgets.
+          </p>
+        </div>
+
+        <!-- Table Switcher Tabs -->
+        <div class="tab-bar" role="tablist" aria-label="Benchmark tables">
+          <button id="ttab-main" class="tab-btn" role="tab" aria-selected="true" aria-controls="tpanel-main" tabindex="0" type="button">
+            Table 1: Main Benchmarks
+          </button>
+          <button id="ttab-comp" class="tab-btn" role="tab" aria-selected="false" aria-controls="tpanel-comp" tabindex="-1" type="button">
+            Table 3: vs. AP, NGC &amp; Metro-WM
+          </button>
+          <button id="ttab-tax" class="tab-btn" role="tab" aria-selected="false" aria-controls="tpanel-tax" tabindex="-1" type="button">
+            Table 2: 6-Axis Diagnostic Taxonomy
+          </button>
+        </div>
+
+        <!-- Table 1 Panel -->
+        <div id="tpanel-main" class="tab-panel" role="tabpanel" aria-labelledby="ttab-main">
+          <div class="table-wrap" role="region" aria-label="Table 1: Main long-horizon benchmark results" tabindex="0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">Push-T 150</th>
+                  <th scope="col">Two-Room 75</th>
+                  <th scope="col">PM-M 200</th>
+                  <th scope="col">PM-M Stitch.</th>
+                  <th scope="col">PM-L 400</th>
+                  <th scope="col">PM-L Stitch.</th>
+                  <th scope="col">Reacher 150</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>LeWM</td>
+                  <td>5 <span class="std">&plusmn;4</span></td>
+                  <td>31 <span class="std">&plusmn;3</span></td>
+                  <td>13 <span class="std">&plusmn;2</span></td>
+                  <td>39 <span class="std">&plusmn;10</span></td>
+                  <td>8 <span class="std">&plusmn;0</span></td>
+                  <td>5 <span class="std">&plusmn;1</span></td>
+                  <td>60 <span class="std">&plusmn;6</span></td>
+                </tr>
+                <tr>
+                  <td>LeWM + min-over-plan</td>
+                  <td>9 <span class="std">&plusmn;1</span></td>
+                  <td>62 <span class="std">&plusmn;10</span></td>
+                  <td>12 <span class="std">&plusmn;5</span></td>
+                  <td>41 <span class="std">&plusmn;4</span></td>
+                  <td class="second">26 <span class="std">&plusmn;6</span></td>
+                  <td class="second">17 <span class="std">&plusmn;1</span></td>
+                  <td class="best">77 <span class="std">&plusmn;5</span></td>
+                </tr>
+                <tr>
+                  <td>PLDM</td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                  <td>50 <span class="std">&plusmn;6</span></td>
+                  <td>3 <span class="std">&plusmn;3</span></td>
+                  <td>28 <span class="std">&plusmn;4</span></td>
+                  <td>1 <span class="std">&plusmn;1</span></td>
+                  <td>2 <span class="std">&plusmn;0</span></td>
+                  <td>15 <span class="std">&plusmn;1</span></td>
+                </tr>
+                <tr>
+                  <td>GCIVL</td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                  <td>81 <span class="std">&plusmn;2</span></td>
+                  <td>0<sup>&dagger;</sup></td>
+                  <td>16 <span class="std">&plusmn;0</span></td>
+                  <td>1 <span class="std">&plusmn;1</span></td>
+                  <td>3 <span class="std">&plusmn;1</span></td>
+                  <td>0 <span class="std">&plusmn;1</span></td>
+                </tr>
+                <tr>
+                  <td>GCIQL</td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                  <td>37 <span class="std">&plusmn;4</span></td>
+                  <td>1 <span class="std">&plusmn;1</span></td>
+                  <td>12 <span class="std">&plusmn;3</span></td>
+                  <td>3 <span class="std">&plusmn;1</span></td>
+                  <td>3 <span class="std">&plusmn;1</span></td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                </tr>
+                <tr>
+                  <td>HILP</td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                  <td>87 <span class="std">&plusmn;3</span></td>
+                  <td>1 <span class="std">&plusmn;1</span></td>
+                  <td>18 <span class="std">&plusmn;0</span></td>
+                  <td>9 <span class="std">&plusmn;1</span></td>
+                  <td>10 <span class="std">&plusmn;6</span></td>
+                  <td>0 <span class="std">&plusmn;0</span></td>
+                </tr>
+                <tr class="row-ours">
+                  <td>Graph Anchors (navigation, K=6, &lambda;=1)</td>
+                  <td class="second">30 <span class="std">&plusmn;3</span></td>
+                  <td class="second">93 <span class="std">&plusmn;1</span></td>
+                  <td class="second">85 <span class="std">&plusmn;6</span></td>
+                  <td class="best">95 <span class="std">&plusmn;4</span></td>
+                  <td class="best">87 <span class="std">&plusmn;1</span></td>
+                  <td class="best">66 <span class="std">&plusmn;6</span></td>
+                  <td class="second">68 <span class="std">&plusmn;4</span></td>
+                </tr>
+                <tr class="row-ours">
+                  <td>Graph Anchors (contact, K=2, &lambda;=3)</td>
+                  <td class="best">71 <span class="std">&plusmn;3</span></td>
+                  <td class="best">100 <span class="std">&plusmn;0</span></td>
+                  <td class="best">94 <span class="std">&plusmn;5</span></td>
+                  <td class="second">91 <span class="std">&plusmn;4</span></td>
+                  <td>13 <span class="std">&plusmn;6</span></td>
+                  <td>9 <span class="std">&plusmn;5</span></td>
+                  <td>54 <span class="std">&plusmn;11</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-note">
+            Success rate (%, mean &plusmn; std across 50-pair seeds, budget 2d, 400 for stitched maze goals). Best in red, second underlined; <sup>&dagger;</sup>single seed.
+          </p>
+        </div>
+
+        <!-- Table 3 Panel -->
+        <div id="tpanel-comp" class="tab-panel" role="tabpanel" aria-labelledby="ttab-comp" hidden>
+          <div class="table-wrap" role="region" aria-label="Table 3: Head-to-head comparison of training-free planners" tabindex="0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">PM-M 100</th>
+                  <th scope="col">PM-M 200</th>
+                  <th scope="col">Two-Room 75</th>
+                  <th scope="col">Push-T 50</th>
+                  <th scope="col">Push-T 150</th>
+                  <th scope="col">Mean (far)</th>
+                  <th scope="col">PM-L 400</th>
+                  <th scope="col">PM-L Stitch.</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>LeWM</td>
+                  <td>25</td>
+                  <td>13</td>
+                  <td>31</td>
+                  <td>41</td>
+                  <td>5</td>
+                  <td>16.3</td>
+                  <td>10</td>
+                  <td>6</td>
+                </tr>
+                <tr>
+                  <td>AP (uses oracle d)</td>
+                  <td>91</td>
+                  <td>80</td>
+                  <td>97</td>
+                  <td>82<sup>&dagger;</sup></td>
+                  <td>65</td>
+                  <td>80.7</td>
+                  <td>18</td>
+                  <td>9</td>
+                </tr>
+                <tr>
+                  <td>NGC (N = 5k)</td>
+                  <td><strong>97</strong></td>
+                  <td><strong>100</strong></td>
+                  <td>99</td>
+                  <td>59</td>
+                  <td>11</td>
+                  <td>70.0</td>
+                  <td>24</td>
+                  <td>20</td>
+                </tr>
+                <tr>
+                  <td>Metro-WM-style (tuned per task)</td>
+                  <td>95</td>
+                  <td>96</td>
+                  <td>99</td>
+                  <td>72</td>
+                  <td>33</td>
+                  <td>76.0</td>
+                  <td>6</td>
+                  <td>6</td>
+                </tr>
+                <tr class="row-ours">
+                  <td>Graph Anchors (navigation)</td>
+                  <td>89</td>
+                  <td>85</td>
+                  <td>93</td>
+                  <td>65</td>
+                  <td>30</td>
+                  <td>69.3</td>
+                  <td class="best">76 [87]</td>
+                  <td class="best">45 [66]</td>
+                </tr>
+                <tr class="row-ours">
+                  <td>Graph Anchors (contact)</td>
+                  <td><strong>97</strong></td>
+                  <td>94</td>
+                  <td class="best">100</td>
+                  <td><strong>85</strong></td>
+                  <td class="best">71</td>
+                  <td class="best">88.3</td>
+                  <td>13</td>
+                  <td>9</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-note">
+            Identical frozen LeWM checkpoints, pairs, and 2d budgets. Mean (far) averages PM-M 200, Two-Room 75, and Push-T 150. PointMaze-Large runs use the shared <code>lewm_pml</code> checkpoint (original checkpoint in brackets).
+          </p>
+        </div>
+
+        <!-- Table 2 Panel -->
+        <div id="tpanel-tax" class="tab-panel" role="tabpanel" aria-labelledby="ttab-tax" hidden>
+          <div class="table-wrap" role="region" aria-label="Table 2: Six-axis diagnostic taxonomy" tabindex="0">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">Training-Free</th>
+                  <th scope="col">Local Controller</th>
+                  <th scope="col">Full-Data Sparse Graph</th>
+                  <th scope="col">No Oracle d</th>
+                  <th scope="col">Contact-Safe</th>
+                  <th scope="col">Pass-Through</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>GAS</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td>Policy (HILP)</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                </tr>
+                <tr>
+                  <td>TTGS</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td>Policy (GCIVL)</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                </tr>
+                <tr>
+                  <td>AP</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td>Frozen LeWM</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                </tr>
+                <tr>
+                  <td>NGC</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td>Frozen LeWM</td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                </tr>
+                <tr>
+                  <td>Metro-WM</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td>Frozen LeWM</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                  <td><span class="check-no">&times;</span></td>
+                </tr>
+                <tr class="row-ours">
+                  <td>Graph Anchors (Ours)</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td>Frozen LeWM</td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                  <td><span class="check-yes">&check;</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-note">
+            Every prior planner drops at least one axis identified by our diagnosis and fails precisely where that axis is tested.
+          </p>
+        </div>
+
+        <!-- Visual Figures Grid (Click any figure to open lightbox) -->
+        <div class="figures-grid">
+          <figure class="figure-card figures-grid-full">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/fig_results_row.png"
+              data-alt="Success rate vs goal distance curves across four environments"
+              data-title="Figure 6: Near Targets Eliminate the Collapse with Goal Distance"
+              data-caption="Blue: Graph Anchors (diamonds: contact setting on Push-T). Amber dashed: GCBC. Gray: LeWM and LeWM + min-over-plan. Light gray dashed: DINO-WM. Graph Anchors hold 85-98% across PointMaze-Medium and lift PointMaze-Large d=400 from 8% to 87%."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/fig_results_row.webp" type="image/webp">
+                <img src="assets/figs/fig_results_row.png" alt="Scaling curves showing Graph Anchors eliminating distance collapse" width="1513" height="347" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Distance scaling across four benchmarks.</strong> Direct goal-aimed planning collapses as goal offset d grows; Graph Anchors hold steady across all horizons up to d = 400.
+            </figcaption>
+          </figure>
+
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/figS_comp_quant_v2.png"
+              data-alt="Quantitative failure profile, scaling wall, and fragility of AP, NGC, and Metro-WM"
+              data-title="Figure 10: Quantitative Failure Profile, Scaling Wall, and Fragility"
+              data-caption="(a) Four-way success across six long-range benchmarks. (b) Push-T route continuity: NGC teleports the block across 65.9% of hops; Metro-WM switches episodes 7.03 times per 6 moves. (c) RTX 3090 Ti GPU memory and latency: Graph Anchors indexes 40x more nodes 26.8x faster than NGC. (d) AP collapses under mis-specified d; Metro-WM lacks any single transferable (h, H) setting."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/figS_comp_quant_v2.webp" type="image/webp">
+                <img src="assets/figs/figS_comp_quant_v2.png" alt="Four-panel quantitative diagnosis of AP, NGC, and Metro-WM against Graph Anchors" width="1513" height="1066" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Why AP, NGC, and Metro-WM break down.</strong> Quantifying Push-T route continuity, the O(N<sup>2</sup>) GPU scaling wall, AP's sensitivity to mis-specified step count d, and Metro-WM's per-task (h, H) fragility.
+            </figcaption>
+          </figure>
+
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/figS_comp_anatomy.png"
+              data-alt="Visual breakdown of graph shortcuts, across-wall retrieval, and Push-T route fragmentation"
+              data-title="Figure 11: Visual Breakdown of Planner Failures on Real Datasets"
+              data-caption="Top (PointMaze-Medium): on 1% data, NGC (a) and Metro-WM (b) admit false long-jump shortcuts while Graph Anchors (c) admits 0.00%; on stitched goals (d), AP retrieves a start across solid walls. Bottom (Push-T): NGC (e) teleports the block up to 217 px / 131 deg; Metro-WM (f) splits the route into 17 episode switches; Graph Anchors (g) follows continuous pushes with 1 switch."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/figS_comp_anatomy.webp" type="image/webp">
+                <img src="assets/figs/figS_comp_anatomy.png" alt="Visual anatomy of planner failures on PointMaze-Medium and Push-T" width="1513" height="971" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Visual anatomy on real encoded datasets.</strong> Zero shortcuts on 1% PointMaze data, clean cross-wall stitching, and unbroken Push-T trajectories (1 switch vs. 17 in Metro-WM and 217 px teleports in NGC).
+            </figcaption>
+          </figure>
+
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/fig_ablation_row.png"
+              data-alt="Ablation results: 2x2 factorial, span K vs horizon H, and contact switch cost"
+              data-title="Figure 7: Component Ablations and Contact Switch Cost"
+              data-caption="(a) 2x2 factorial separating target choice from closest-approach search. (b) Anchor span K vs. horizon H grid. (c) On Push-T d=150, adding switch cost lambda=3 jumps K=3 success from 30% to 72% (and K=2 to 71%), surpassing AP on identical pairs."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/fig_ablation_row.webp" type="image/webp">
+                <img src="assets/figs/fig_ablation_row.png" alt="Component ablation study across target choice, span K, horizon H, and switch cost" width="1513" height="460" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Why each component is needed.</strong> Nearby targets drive the maze jump, closest-approach execution lifts Two-Room, and the switch penalty &lambda; = 3 is decisive for Push-T contact.
+            </figcaption>
+          </figure>
+
+          <figure class="figure-card">
+            <button
+              type="button"
+              class="figure-trigger"
+              data-full="assets/figs/fig_robust_bars.png"
+              data-alt="Robustness under 1% data, random play, mid-episode kidnapping, and unseen dataset"
+              data-title="Figure 8: Robustness Under Scarce, Shifted, and Perturbed Data"
+              data-caption="On PointMaze-Medium d=200, Graph Anchors achieve 63% with just 1% of training episodes, 90% on a pure random-play graph, and 65% under mid-episode kidnapping. On PointMaze-Large d=400, indexing a separate unseen dataset still achieves 87%."
+            >
+              <span class="zoom-hint">Click to zoom</span>
+              <picture>
+                <source srcset="assets/figs/fig_robust_bars.webp" type="image/webp">
+                <img src="assets/figs/fig_robust_bars.png" alt="Robustness bars for 1% data, random play, kidnapping, and unseen dataset" width="715" height="434" loading="lazy">
+              </picture>
+            </button>
+            <figcaption class="figure-caption">
+              <strong>Scarce &amp; imperfect data suffice.</strong> Reaches 63% with 1% of episodes, 90% on random play, 87% on an unseen PointMaze-Large dataset, and 65% under mid-episode kidnapping.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         Section 6: BibTeX Citation
+         =================================================================== -->
+    <section id="citation" class="section section-alt section-deferred">
+      <div class="container-narrow">
+        <div class="section-head">
+          <span class="section-tag">Reference</span>
+          <h2 class="section-title">Citation</h2>
+          <p class="section-lead">
+            If you build on our diagnosis, benchmarks, or Graph Anchors planner, please cite our paper.
+          </p>
+        </div>
+
+        <div class="bibtex-box">
+          <div class="bibtex-bar">
+            <span class="bibtex-label">BibTeX</span>
+            <button id="copy-bibtex" class="copy-btn" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copy BibTeX</span>
+            </button>
+          </div>
+          <pre id="bibtex-content" class="bibtex-code">@article{sakib2026graphanchors,
+  title   = {Long-Horizon Planning with Latent World Models via Graph Anchors},
+  author  = {Sakib, Syed Nazmus and Chowdhury, Abdul Monaf and Li, Peizhen and Haque, Nafiul and Chakma, Chandak and Hasan, Md Mehedi and Cao, Zehong and Arman, Shifat E.},
+  journal = {arXiv preprint},
+  year    = {2026},
+  url     = {https://syed-nazmus-sakib.github.io/graph-anchors/}
+}</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- =====================================================================
+       Footer
+       ===================================================================== -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        &copy; 2026 Graph Anchors Authors &middot; Corresponding author:
+        <a href="mailto:shifat.arman@eng.ox.ac.uk">shifat.arman@eng.ox.ac.uk</a>
+      </div>
+      <div class="footer-links">
+        <a href="assets/paper.pdf" target="_blank" rel="noopener noreferrer">Paper PDF</a>
+        <a href="https://github.com/syed-nazmus-sakib/graph-anchors" target="_blank" rel="noopener noreferrer">GitHub Code</a>
+        <a href="https://github.com/syed-nazmus-sakib/graph-anchors/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- =====================================================================
+       Native Light-Dismiss Lightbox Dialog (<dialog closedby="any">)
+       ===================================================================== -->
+  <dialog id="figure-lightbox" class="lightbox" closedby="any" aria-labelledby="lightbox-title">
+    <div class="lightbox-head">
+      <h2 id="lightbox-title" class="lightbox-title">Figure</h2>
+      <form method="dialog">
+        <button class="icon-btn" type="submit" aria-label="Close figure preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </form>
+    </div>
+    <div class="lightbox-body">
+      <img id="lightbox-img" src="" alt="">
+    </div>
+    <p id="lightbox-cap" class="lightbox-cap"></p>
+  </dialog>
+</body>
+</html>

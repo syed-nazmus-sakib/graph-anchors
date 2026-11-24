@@ -1,52 +1,40 @@
-# large files live in artifacts/ (see artifacts/README.md)
-/artifacts/*
-*.zip
-*.tar.gz
+# Python & virtual environments
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.egg-info/
-*.pth.tar
-*.pt
-*.ckpt
-*.npz
-*.h5
-outputs/
-multirun/
-wandb/
-logs/
-run_logs/
-.pytest_cache/
-.ipynb_checkpoints/
+.eggs/
+build/
+dist/
 .venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS & editor files
+.DS_Store
+._*
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local secrets & environment files
 .env
 .env.*
-!.env.example
-*.pem
-*.key
-MUJOCO_LOG.TXT
-/code/lewm_explorations/results
-/code/jepa-wms/macros.py
-# Small scientific evidence is deliberately included in the GitHub repository.
-!/results/**/*.npz
-!/results/**/*.pt
-# macOS / external-drive metadata
-._*
-.DS_Store
-# LaTeX build by-products
-*.aux
-*.out
-*.log
-*.synctex.gz
-# local only, never pushed:
-#   paper/   CVPR 2027 manuscript (LaTeX, v2 and v3)
-#   notes/   meeting notes, write-ups, research notes, reports, figure candidates, reviews
-#   others/  third-party papers and reference repos, scratch renders, old scripts
-#   *.tgz in the root: hand-off bundles (e.g. dinowm_files.tgz for the HPC)
-/paper/
-/notes/
-/others/
-/*.tgz
-/.harness/
 
-# package lists written by scripts/hpc/env_setup.sh on each machine
-scripts/hpc/frozen_*.txt*
+# Third-party clones, checkpoints, datasets & run outputs
+third_party/stable-worldmodel/
+third_party/jepa-wms/
+out/
+outputs/
+logs/
+wandb/
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.npz
