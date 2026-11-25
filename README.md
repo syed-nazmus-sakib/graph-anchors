@@ -2,12 +2,12 @@
 
 # Long-Horizon Planning with Latent World Models via Graph Anchors
 
-**Syed Nazmus Sakib**<sup>1</sup>, **Abdul Monaf Chowdhury**<sup>1</sup>, **Peizhen Li**<sup>3</sup>, **Nafiul Haque**<sup>1</sup>, **Chandak Chakma**<sup>1</sup>, **Md Mehedi Hasan**<sup>1</sup>, **Zehong Cao**<sup>3</sup>, and **Shifat E. Arman**<sup>1,2,*</sup>
+**Syed Nazmus Sakib**<sup>1</sup>, **Abdul Monaf Chowdhury**<sup>1</sup>, **Peizhen Li**<sup>3</sup>, **Nafiul Haque**<sup>1</sup>, **Chandak Chakma**<sup>1</sup>, **Md Mehedi Hasan**<sup>1</sup>, **Zehong Cao**<sup>3,*</sup>, and **Shifat E. Arman**<sup>1,2,*</sup>
 
 <sup>1</sup> Department of Robotics and Mechatronics Engineering, University of Dhaka<br>
-<sup>2</sup> Department of Engineering Science, University of Oxford<br>
+<sup>2</sup> Department of Computer Science, University of Oxford<br>
 <sup>3</sup> School of CSIT, Adelaide University<br>
-<sub><sup>*</sup>Corresponding author: <code>shifat.arman@eng.ox.ac.uk</code></sub>
+<sub><sup>*</sup>Corresponding authors: <code>Jimmy.Cao@adelaide.edu.au</code>, <code>shifat.arman@eng.ox.ac.uk</code></sub>
 
 <p>
   <a href="https://syed-nazmus-sakib.github.io/graph-anchors/"><img src="https://img.shields.io/badge/Project_Page-Live-0A66C2?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Project Page"></a>
